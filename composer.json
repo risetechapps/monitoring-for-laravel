@@ -1,5 +1,5 @@
 {
-    "name": "risetechapps/monitoring",
+    "name": "risetechapps/monitoring-for-laravel",
     "description": "",
     "keywords": [
         "risetech",
@@ -7,7 +7,7 @@
         "monitoring",
         "laravel"
     ],
-    "homepage": "https://github.com/risetechapps/monitoring",
+    "homepage": "https://github.com/risetechapps/monitoring-for-laravel",
     "license": "MIT",
     "type": "library",
     "authors": [
