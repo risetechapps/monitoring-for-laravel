@@ -5,6 +5,7 @@ namespace RiseTechApps\Monitoring\Entry;
 
 use Carbon\Carbon;
 use Illuminate\Support\Str;
+use RiseTechApps\Monitoring\Features\Device\Device;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 
 class IncomingEntry
@@ -137,6 +138,7 @@ class IncomingEntry
             'content' => json_encode($this->content),
             'tags' => json_encode($this->tags),
             'created_at' => $this->recordedAt->toDateTimeString(),
+            'device' => Device::info()
         ];
     }
 }
