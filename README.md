@@ -1,52 +1,55 @@
-# Very short description of the package
+# Laravel Monitoring
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/risetech/logs.svg?style=flat-square)](https://packagist.org/packages/risetech/logs)
-[![Total Downloads](https://img.shields.io/packagist/dt/risetech/logs.svg?style=flat-square)](https://packagist.org/packages/risetech/logs)
-![GitHub Actions](https://github.com/risetech/logs/actions/workflows/main.yml/badge.svg)
+## 📌 Sobre o Projeto
+O **Laravel Monitoring** é um package para Laravel que monitora toda atividade e registra no servidor.
 
-This is where your description should go. Try and limit it to a paragraph or two, and maybe throw in a mention of what PSRs you support to avoid any confusion with users and contributors.
+## ✨ Funcionalidades
+- 🔄 **Command** monitora todos os comandos
+- 🔄 **Event** monitora todos os enventos
+- 🔄 **Exception** monitora todas as exceções lançadas
+- 🔄 **Gate** monitora todos os eventos gate
+- 🔄 **JobWatcher** monitora todos os jobs
+- 🔄 **Notification** monitora todas as notificações
+- 🔄 **Queue** monitora todas as filas
+- 🔄 **Request** captura todos os requests e responses
+- 🔄 **Schedule** monitora todos os eventos programados
 
-## Installation
+---
 
-You can install the package via composer:
+## 🚀 Instalação
 
+### 1️⃣ Requisitos
+Antes de instalar, certifique-se de que seu projeto atenda aos seguintes requisitos:
+- PHP >= 8.0
+- Laravel >= 10
+- Composer instalado
+
+### 2️⃣ Instalação do Package
+Execute o seguinte comando no terminal:
 ```bash
-composer require risetech/logs
+composer require risetechapps/monitoring-for-laravel
 ```
 
-## Usage
-
-```php
-// Usage description here
-```
-
-### Testing
-
+### 4️⃣ Rodar Migrations
 ```bash
-composer test
+php artisan migrate
 ```
 
-### Changelog
+---
 
-Please see [CHANGELOG](CHANGELOG.md) for more information what has changed recently.
+## 🛠 Contribuição
+Sinta-se à vontade para contribuir! Basta seguir estes passos:
+1. Faça um fork do repositório
+2. Crie uma branch (`feature/nova-funcionalidade`)
+3. Faça um commit das suas alterações
+4. Envie um Pull Request
 
-## Contributing
+---
 
-Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
+## 📜 Licença
+Este projeto é distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
 
-### Security
+---
 
-If you discover any security related issues, please email apps@risetech.com.br instead of using the issue tracker.
+💡 **Desenvolvido por [Rise Tech](https://risetech.com.br)**
 
-## Credits
-
--   [RiseTech](https://github.com/risetech)
--   [All Contributors](../../contributors)
-
-## License
-
-The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
-
-## Laravel Package Boilerplate
-
-This package was generated using the [Laravel Package Boilerplate](https://laravelpackageboilerplate.com).
