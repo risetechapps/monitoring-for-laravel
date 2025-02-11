@@ -5,6 +5,7 @@ namespace RiseTechApps\Monitoring;
 use Illuminate\Foundation\Http\Events\RequestHandled;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use RiseTechApps\Monitoring\Features\Device\Device;
 use RiseTechApps\Monitoring\Http\Middleware\DisableMonitoringMiddleware;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Repository\MonitoringRepository;
@@ -57,6 +58,10 @@ class MonitoringServiceProvider extends ServiceProvider
 
         $this->app->singleton(BatchIdService::class, function ($app) {
             return new BatchIdService();
+        });
+
+        $this->app->singleton(Device::class, function ($app) {
+            return new Device();
         });
     }
 }
