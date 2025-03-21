@@ -41,17 +41,20 @@ return new class extends Migration
      */
     public function up()
     {
+        // Verificar se a tabela já não existe
         if (!$this->schema->hasTable('monitorings')) {
             $this->schema->create('monitorings', function (Blueprint $table) {
                 $table->bigIncrements('id');
-                $table->uuid('uuid');
-                $table->uuid('batch_id');
-                $table->string('type', 20);
-                $table->json('content')->nullable();
-                $table->json('tags')->nullable();
-                $table->timestamps();
-                $table->unique('uuid');
-                $table->index('created_at');
+                $table->uuid('uuid')->unique(); // UUID para identificação única
+                $table->uuid('batch_id'); // Referência ao batch
+                $table->string('type', 20); // Tipo de monitoramento
+                $table->json('content')->nullable(); // Conteúdo do monitoramento
+                $table->json('tags')->nullable(); // Tags associadas ao monitoramento
+                $table->timestamps(); // timestamps (created_at e updated_at)
+
+                // Índices para otimizar consultas
+                $table->index('created_at'); // Índice em created_at para consultas baseadas em tempo
+                $table->index('batch_id'); // Índice em batch_id para otimizar consultas por batch_id
             });
         }
     }
@@ -63,6 +66,7 @@ return new class extends Migration
      */
     public function down()
     {
+        // Remover a tabela se existir
         $this->schema->dropIfExists('monitorings');
     }
 };
