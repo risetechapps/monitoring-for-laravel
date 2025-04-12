@@ -2,7 +2,6 @@
 
 namespace RiseTechApps\Monitoring\Repository;
 
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
