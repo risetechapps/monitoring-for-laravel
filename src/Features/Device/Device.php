@@ -1,6 +1,7 @@
 <?php
 
 namespace RiseTechApps\Monitoring\Features\Device;
+
 use GuzzleHttp\Client;
 
 class Device
@@ -92,17 +93,35 @@ class Device
     private static function getGeoIP(\hisorange\BrowserDetect\Contracts\ResultInterface $class)
     {
         try {
-            $ip = request()->ip();
+            $ips = request()->ips();
+
+            $responseData = [
+                "status" => "",
+                "country" => "",
+                "countryCode" => "",
+                "region" => "",
+                "regionName" => "",
+                "city" => "",
+                "zip" => "",
+                "lat" => "",
+                "lon" => "",
+                "timezone" => "",
+                "isp" => "",
+                "org" => "",
+                "as" => "",
+                "query" => "",
+            ];
 
             $client = new Client();
 
-            $response = $client->get("http://ip-api.com/json/${ip}");
-
-            if ($response->getStatusCode() == 200) {
-                return json_decode($response->getBody(), true);
+            foreach ($ips as $ip) {
+                $response = $client->get("http://ip-api.com/json/${ip}");
+                if ($response->getStatusCode() == 200) {
+                    $responseData = json_decode($response->getBody(), true);
+                }
             }
 
-            return null;
+            return $responseData;
         } catch (\Exception $exception) {
             return null;
         }

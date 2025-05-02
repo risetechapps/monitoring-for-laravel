@@ -67,6 +67,7 @@ class Monitoring
     public function __construct(MonitoringRepositoryInterface $repository)
     {
         self::$repository = $repository;
+        self::$enabled = true;
     }
 
     /**

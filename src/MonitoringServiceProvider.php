@@ -31,7 +31,6 @@ class MonitoringServiceProvider extends ServiceProvider
         Event::listen(RequestHandled::class, function () {
             Monitoring::flushAll();
         });
-
     }
 
     /**
