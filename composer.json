@@ -60,6 +60,5 @@
     "prefer-stable": true,
     "config": {
         "sort-packages": true
-    },
-    "version": "1.0.0"
+    }
 }
