@@ -23,6 +23,7 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
             'x-api-key' => $this->token
         ])->post($this->url, $data);
 
+
         if ($response->status() !== 202) {
             Log::critical('error register log', $data);
         }

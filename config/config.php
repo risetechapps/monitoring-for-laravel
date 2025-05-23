@@ -5,6 +5,8 @@
  */
 return [
 
+    'enabled' => env('MONITORING_ENABLED', true),
+
     'driver' => env('MONITORING_DRIVER', 'mysql'),
 
     'drivers' => [

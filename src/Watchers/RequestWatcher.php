@@ -41,6 +41,7 @@ class RequestWatcher extends Watcher
     public function recordRequest(RequestHandled $handled): void
     {
         try {
+
             if(!Monitoring::isEnabled()) return;
 
             if ($this->shouldIgnoreHttpMethod($handled)) {

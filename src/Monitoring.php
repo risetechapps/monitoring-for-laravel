@@ -7,6 +7,7 @@ use Illuminate\Console\Application;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Traits\Record\Record;
@@ -57,7 +58,7 @@ class Monitoring
     /** Status do monitor se está ativo ou não
      * @var false
      */
-    private static bool $enabled = true;
+    private static bool $enabled = false;
 
     /**
      * Monitoring constructor.
@@ -91,6 +92,9 @@ class Monitoring
      */
     public static function start($app): void
     {
+
+        static::$enabled = (bool) config('monitoring.enabled');
+
         $repository = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
 
@@ -168,6 +172,7 @@ class Monitoring
                 static::flushBuffer();
             }
         } catch (\Exception $exception) {
+
         }
     }
 
@@ -191,7 +196,7 @@ class Monitoring
             });
 
         } catch (\Exception $e) {
-
+            Log::critical('error register log', self::$buffer);
         }
     }
 
