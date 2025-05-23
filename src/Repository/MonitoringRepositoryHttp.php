@@ -11,9 +11,9 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
     protected string $url;
     protected string $token;
 
-    public function __construct(string $url, string $token)
+    public function __construct(string $token)
     {
-        $this->url = $url;
+        $this->url = "https://monitoring.app.br/api/logs";
         $this->token = $token;
     }
 

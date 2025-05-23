@@ -49,7 +49,7 @@ class MonitoringServiceProvider extends ServiceProvider
             return match ($driver) {
                 'mysql' => new MonitoringRepositoryMysql($driversConfig['mysql']['connection']),
                 'pgsql' => new MonitoringRepositoryPgsql($driversConfig['pgsql']['connection']),
-                'http' => new MonitoringRepositoryHttp($driversConfig['http']['url'], $driversConfig['http']['token']),
+                'http' => new MonitoringRepositoryHttp($driversConfig['http']['token']),
                 default => throw new \Exception("Driver {$driver} não é suportado.")
             };
         });
