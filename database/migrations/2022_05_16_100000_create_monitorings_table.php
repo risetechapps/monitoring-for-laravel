@@ -50,6 +50,7 @@ return new class extends Migration
                 $table->string('type', 20); // Tipo de monitoramento
                 $table->json('content')->nullable(); // Conteúdo do monitoramento
                 $table->json('tags')->nullable(); // Tags associadas ao monitoramento
+                $table->json('device')->nullable(); // Device - Informações do dispositivo
                 $table->timestamps(); // timestamps (created_at e updated_at)
 
                 // Índices para otimizar consultas
