@@ -47,7 +47,7 @@ Sinta-se à vontade para contribuir! Basta seguir estes passos:
 ---
 
 ## 📜 Licença
-Este projeto é distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
+Este projeto é licenciado sob os termos da **GNU General Public License v3.0** — veja o arquivo [LICENSE](./LICENSE) para detalhes.
 
 ---
 
