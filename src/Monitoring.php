@@ -182,9 +182,11 @@ class Monitoring
 
         try {
             DB::transaction(function () {
+                $dataEntry = [];
                 foreach (self::$buffer as $entry) {
-                    self::$repository->create($entry->toArray());
+                    $dataEntry[] = $entry->toArray();
                 }
+                self::$repository->create($dataEntry);
                 self::$buffer = [];
             });
 

@@ -11,6 +11,9 @@ return [
         'mysql' => [
             'connection' => env('DB_CONNECTION', 'mysql'),
         ],
+        'pgsql' => [
+            'connection' => env('DB_CONNECTION', 'pgsql'),
+        ],
         'http' => [
             'url' => env('MONITORING_HTTP_URL', 'https://example.com/logs'),
             'token' => env('MONITORING_HTTP_TOKEN', ''),

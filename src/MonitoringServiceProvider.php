@@ -12,6 +12,7 @@ use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Repository\MonitoringRepository;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryHttp;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryMysql;
+use RiseTechApps\Monitoring\Repository\MonitoringRepositoryPgsql;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 
 class MonitoringServiceProvider extends ServiceProvider
@@ -47,6 +48,7 @@ class MonitoringServiceProvider extends ServiceProvider
 
             return match ($driver) {
                 'mysql' => new MonitoringRepositoryMysql($driversConfig['mysql']['connection']),
+                'pgsql' => new MonitoringRepositoryPgsql($driversConfig['pgsql']['connection']),
                 'http' => new MonitoringRepositoryHttp($driversConfig['http']['url'], $driversConfig['http']['token']),
                 default => throw new \Exception("Driver {$driver} não é suportado.")
             };
