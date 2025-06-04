@@ -254,6 +254,8 @@ class Loggly
      */
     public function log(string $message): void
     {
+        $this->withProperties($this->resolveCaller());
+
         $entry = IncomingEntry::make([
             'level' => $this->level,
             'message' => $this->encryptLogs ? encrypt($message) : $message,
@@ -304,4 +306,53 @@ class Loggly
                 throw new \InvalidArgumentException("Unsupported output: {$this->output}");
         }
     }
+
+    private function resolveCaller(): array
+    {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+
+        $traceData = [
+            'file' => 'unknown',
+            'line' => 0,
+            'function' =>  "{closure}",
+            'class' => 'anonymous',
+        ];
+
+        if (count($trace) > 0) {
+            $traceData['file'] = $trace[1]['file'];
+            $traceData['line'] = $trace[1]['line'];
+            $traceData['class'] = $this->fileToClass($traceData['file']);
+        }
+
+        if($traceData['class'] === "anonymous"){
+            return $traceData;
+        }
+
+        foreach ($trace as $index => $frame) {
+
+            if(array_key_exists('class', $frame)) {
+                if($traceData['class'] === $frame['class']) {
+                    $traceData['function'] = $frame['function'];
+                    return  $traceData;
+                }
+            }
+        }
+
+        return $traceData;
+    }
+
+    public function fileToClass(string $filePath): ?string
+    {
+        $filePath = str_replace('/', '\\', $filePath);
+        $pos = stripos($filePath, '\\app\\');
+        if ($pos === false) {
+            return "anonymous";
+        }
+        $relativePath = substr($filePath, $pos + 5);
+        $relativePath = preg_replace('/\.php$/i', '', $relativePath);
+        $class = str_replace('\\', '\\', $relativePath);
+        return 'App\\' . $class;
+    }
+
+
 }
