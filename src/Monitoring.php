@@ -5,6 +5,7 @@ namespace RiseTechApps\Monitoring;
 use Closure;
 use Illuminate\Console\Application;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -93,7 +94,7 @@ class Monitoring
     public static function start($app): void
     {
 
-        static::$enabled = (bool) config('monitoring.enabled');
+        static::$enabled = (bool)config('monitoring.enabled');
 
         $repository = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
@@ -125,6 +126,7 @@ class Monitoring
             Watchers\QueueWatcher::class,
             Watchers\ScheduleWatcher::class,
             Watchers\NotificationWatcher::class,
+            Watchers\MailWatcher::class,
         ];
     }
 
@@ -140,6 +142,13 @@ class Monitoring
             Watchers\RequestWatcher::class => [
                 'ignore_http_methods' => [
                     'options'
+                ],
+                'ignore_status_codes' => [
+
+                ],
+                'ignore_paths' => [
+                    'telescope',
+                    'telescope-api'
                 ]
             ],
             Watchers\EventWatcher::class => [
@@ -169,6 +178,8 @@ class Monitoring
             self::$buffer[] = $entry;
 
             if (count(self::$buffer) >= self::$bufferSize) {
+                static::flushBuffer();
+            } else if (App::runningInConsole()) {
                 static::flushBuffer();
             }
         } catch (\Exception $exception) {
