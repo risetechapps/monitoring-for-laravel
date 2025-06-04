@@ -118,7 +118,7 @@ class Loggly
      */
     public function withProperties(array $properties = []): Loggly
     {
-        $this->properties[] = $properties;
+        $this->properties = array_merge($this->properties, $properties);
         return $this;
     }
 
