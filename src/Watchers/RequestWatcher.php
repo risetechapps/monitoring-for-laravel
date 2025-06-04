@@ -120,11 +120,6 @@ class RequestWatcher extends Watcher
         return collect($this->options['ignore_paths'])->contains(function ($part) use ($path) {
             return Str::contains($path, $part);
         });
-
-        return in_array(
-            $event->request->path(),
-            $this->options['ignore_paths'] ?? []
-        );
     }
 
     /**
