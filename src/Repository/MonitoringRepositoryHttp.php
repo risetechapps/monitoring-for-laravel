@@ -32,16 +32,40 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     public function getAllEvents(): Collection
     {
-        // TODO: Implement getAllEvents() method.
+        $response = Http::withHeaders([
+            'x-api-key' => $this->token
+        ])->get($this->url);
+
+        if($response->successful()) {
+            return collect($response->json());
+        }
+
+        return collect();
     }
 
     public function getEventById(string $id): Collection
     {
-        // TODO: Implement getEventById() method.
+        $response = Http::withHeaders([
+            'x-api-key' => $this->token
+        ])->get($this->url . '/show/' . $id);
+
+        if($response->successful()) {
+            return collect($response->json());
+        }
+
+        return collect();
     }
 
     public function getEventsByTypes(string $type): Collection
     {
-        // TODO: Implement getEventsByTypes() method.
+        $response = Http::withHeaders([
+            'x-api-key' => $this->token
+        ])->get($this->url . '/type/' . $type);
+
+        if($response->successful()) {
+            return collect($response->json());
+        }
+
+        return collect();
     }
 }
