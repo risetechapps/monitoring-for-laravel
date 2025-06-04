@@ -21,7 +21,7 @@ class RequestWatcher extends Watcher
      *
      * Este método configura um ouvinte para o evento RequestHandled, que é acionado quando uma solicitação HTTP é processada.
      *
-     * @param  mixed  $app A instância do aplicativo que fornece o container de eventos.
+     * @param mixed $app A instância do aplicativo que fornece o container de eventos.
      * @return void
      */
     public function register($app): void
@@ -42,13 +42,17 @@ class RequestWatcher extends Watcher
     {
         try {
 
-            if(!Monitoring::isEnabled()) return;
+            if (!Monitoring::isEnabled()) return;
 
             if ($this->shouldIgnoreHttpMethod($handled)) {
                 return;
             }
 
             if ($this->shouldIgnoreStatusCode($handled)) {
+                return;
+            }
+
+            if ($this->shouldIgnorePaths($handled)) {
                 return;
             }
 
@@ -100,6 +104,26 @@ class RequestWatcher extends Watcher
         return in_array(
             $event->response->getStatusCode(),
             $this->options['ignore_status_codes'] ?? []
+        );
+    }
+
+    /**
+     * Verifica se o path da url deve ser ignorado.
+     *
+     * @param RequestHandled $event O evento que contém os detalhes da resposta.
+     * @return bool Retorna true se o código de status deve ser ignorado; caso contrário, false.
+     */
+    private function shouldIgnorePaths($event): bool
+    {
+        $path = $event->request->path();
+
+        return collect($this->options['ignore_paths'])->contains(function ($part) use ($path) {
+            return Str::contains($path, $part);
+        });
+
+        return in_array(
+            $event->request->path(),
+            $this->options['ignore_paths'] ?? []
         );
     }
 
@@ -227,4 +251,5 @@ class RequestWatcher extends Watcher
 
         return $data;
     }
+
 }
