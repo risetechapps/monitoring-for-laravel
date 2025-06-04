@@ -137,6 +137,9 @@ class JobWatcher extends Watcher
                 return;
             }
 
+            app(BatchIdService::class)->forceDelete();
+            app(BatchIdService::class)->setBatchId($batchId);
+
             $entry = IncomingEntry::make([
                 'status' => 'failed',
                 'displayName' => $event->job->payload()['displayName'] ?? 'Unknown',
@@ -148,9 +151,6 @@ class JobWatcher extends Watcher
                 ],
                 'hostname' => gethostname(),
             ]);
-
-            app(BatchIdService::class)->forceDelete();
-            app(BatchIdService::class)->setBatchId($batchId);
 
             Monitoring::recordJob($entry);
 
