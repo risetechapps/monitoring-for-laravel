@@ -101,7 +101,7 @@ class Loggly
      * @param int|string $level
      * @return $this
      */
-    public function level($level): Loggly
+    public function level(int|string $level): Loggly
     {
         if (is_int($level) && isset($this->logLevels[$level])) {
             $this->level = $this->logLevels[$level];
