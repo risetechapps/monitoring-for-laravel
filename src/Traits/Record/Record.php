@@ -60,6 +60,11 @@ trait Record
         static::record(EntryType::MODEL, $entry);
     }
 
+    public static function recordMail($entry):void
+    {
+        static::record(EntryType::MAIL, $entry);
+    }
+
     public static function recordLoggly(IncomingEntry $entry): void
     {
         static::record(EntryType::LOG, $entry);
