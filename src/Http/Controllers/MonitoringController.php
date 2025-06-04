@@ -75,7 +75,7 @@ class MonitoringController extends Controller
     {
 
         try {
-            $event = $this->monitoringRepository->getEventsByTypes($request->id);
+            $event = $this->monitoringRepository->getEventsByTypes($request->type);
 
             if (!$event) {
                 return response()->json(['success' => false, 'message' => 'Evento não encontrado'], 500);
