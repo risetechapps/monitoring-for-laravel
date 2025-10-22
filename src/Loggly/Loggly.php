@@ -16,7 +16,6 @@ class Loggly
     ];
 
     /** Constantes para fácil referência de nível de log */
-
     const EMERGENCY = 0;
     const ALERT = 1;
     const CRITICAL = 2;

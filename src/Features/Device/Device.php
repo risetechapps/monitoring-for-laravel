@@ -6,12 +6,6 @@ use GuzzleHttp\Client;
 
 class Device
 {
-    public function __construct()
-    {
-        $class = (new \hisorange\BrowserDetect\Parser())
-            ->parse($_GET['agent'] ?? $_SERVER['HTTP_USER_AGENT'] ?? 'Missing');
-    }
-
     public static function info(): array
     {
         try {
@@ -115,9 +109,13 @@ class Device
             $client = new Client();
 
             foreach ($ips as $ip) {
-                $response = $client->get("http://ip-api.com/json/${ip}");
-                if ($response->getStatusCode() == 200) {
-                    $responseData = json_decode($response->getBody(), true);
+                try {
+                    $response = $client->get("http://ip-api.com/json/${ip}");
+                    if ($response->getStatusCode() == 200) {
+                        $responseData = json_decode($response->getBody(), true);
+                    }
+                } catch (\Exception $exception) {
+
                 }
             }
 

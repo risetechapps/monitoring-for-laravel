@@ -70,7 +70,7 @@ class IncomingEntry
     }
 
 
-    public static function make(...$arguments)
+    public static function make(...$arguments): static
     {
         return new static(...$arguments);
     }
@@ -78,7 +78,7 @@ class IncomingEntry
     /** Função para setar o batch_id
      * @params string $batchId
      */
-    public function batchId(string $batchId)
+    public function batchId(string $batchId): static
     {
         $this->batchId = $batchId;
 
@@ -88,7 +88,7 @@ class IncomingEntry
     /** Função para setar o tipo de registro
      * @params string $type
      */
-    public function type(string $type)
+    public function type(string $type): static
     {
         $this->type = $type;
 
@@ -98,7 +98,7 @@ class IncomingEntry
     /** Função para coletar dados do usuario atual
      * @params mixed $user
      */
-    public function user($user)
+    public function user($user): static
     {
         $this->user = $user;
 
@@ -110,7 +110,7 @@ class IncomingEntry
             ],
         ]);
 
-        $this->tags(['Auth:' . $user->getAuthIdentifier()]);
+        $this->tags(['Auth' =>  $user->getAuthIdentifier()]);
 
         return $this;
     }
