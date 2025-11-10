@@ -42,14 +42,13 @@ class MonitoringServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'monitoring');
 
         $this->app->bind(MonitoringRepositoryInterface::class, function ($app) {
-            // Passe a conexão desejada aqui
             $driver = config('monitoring.driver');
-            $driversConfig = config("monitoring.drivers");
+            $driversConfig = config('monitoring.drivers', []);
 
             return match ($driver) {
-                'mysql' => new MonitoringRepositoryMysql($driversConfig['mysql']['connection']),
-                'pgsql' => new MonitoringRepositoryPgsql($driversConfig['pgsql']['connection']),
-                'http' => new MonitoringRepositoryHttp($driversConfig['http']['token']),
+                'mysql' => new MonitoringRepositoryMysql($driversConfig['mysql']['connection'] ?? env('DB_CONNECTION', 'mysql')),
+                'pgsql' => new MonitoringRepositoryPgsql($driversConfig['pgsql']['connection'] ?? env('DB_CONNECTION', 'pgsql')),
+                'http' => new MonitoringRepositoryHttp($driversConfig['http'] ?? []),
                 default => throw new \Exception("Driver {$driver} não é suportado.")
             };
         });
@@ -66,7 +65,9 @@ class MonitoringServiceProvider extends ServiceProvider
             return new Device();
         });
 
-        $this->registerMacros();
+        if (config('monitoring.response_macros', true)) {
+            $this->registerMacros();
+        }
     }
 
     protected function registerMacros(): void
