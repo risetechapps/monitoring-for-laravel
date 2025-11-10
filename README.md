@@ -35,6 +35,18 @@ composer require risetechapps/monitoring-for-laravel
 php artisan migrate
 ```
 
+### ⚙️ Configuração
+
+Após publicar o arquivo de configuração (`php artisan vendor:publish --tag=monitoring-config`), ajuste as opções em `config/monitoring.php`:
+
+- **`enabled` / `MONITORING_ENABLED`** &mdash; liga ou desliga completamente o pacote.
+- **`environments.only` / `MONITORING_ENV_ONLY`** &mdash; lista (separada por vírgula) de ambientes em que o monitoramento deve rodar. Deixe vazio para permitir em todos.
+- **`environments.except` / `MONITORING_ENV_EXCEPT`** &mdash; ambientes que devem ser ignorados mesmo que estejam em `only`.
+- **`buffer_size` / `MONITORING_BUFFER_SIZE`** &mdash; número de entradas acumuladas antes de persistir em lote.
+- **`watchers`** &mdash; habilite/desabilite watchers individualmente e ajuste opções como métodos HTTP ignorados.
+- **`drivers`** &mdash; configure a conexão SQL ou o endpoint HTTP, inclusive timeout e tentativas de retry.
+- **`response_macros` / `MONITORING_RESPONSE_MACROS`** &mdash; desative se não quiser registrar os helpers `jsonSuccess`, `jsonError`, etc.
+
 ---
 
 ## 🛠 Contribuição

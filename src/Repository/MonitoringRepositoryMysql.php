@@ -51,10 +51,45 @@ class MonitoringRepositoryMysql implements MonitoringRepositoryInterface
 
         $relatedEvents = DB::connection($this->connection)->table($this->table)
             ->where('batch_id', $event->batch_id)
-            ->where('id', '!=', $event->id)
+            ->get()
+            ->groupBy('batch_id');
+
+        $batchRelated = $relatedEvents->get($event->batch_id, collect())
+            ->reject(fn($related) => $related->id === $event->id)
+            ->values();
+
+        return collect($this->formatEvent($event, $batchRelated));
+    }
+
+    public function getEventsByTypes(string $type): Collection
+    {
+        $events = DB::connection($this->connection)->table($this->table)
+            ->where('type', $type)
             ->get();
 
-        return collect([
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        $batchIds = $events->pluck('batch_id')->unique()->values();
+
+        $relatedByBatch = DB::connection($this->connection)->table($this->table)
+            ->whereIn('batch_id', $batchIds)
+            ->get()
+            ->groupBy('batch_id');
+
+        return $events->map(function ($event) use ($relatedByBatch) {
+            $relatedEvents = $relatedByBatch->get($event->batch_id, collect())
+                ->reject(fn($related) => $related->id === $event->id)
+                ->values();
+
+            return $this->formatEvent($event, $relatedEvents);
+        });
+    }
+
+    protected function formatEvent(object $event, Collection $relatedEvents): array
+    {
+        return [
             'id' => $event->id,
             'uuid' => $event->uuid,
             'batch_id' => $event->batch_id,
@@ -74,51 +109,7 @@ class MonitoringRepositoryMysql implements MonitoringRepositoryInterface
                     'created_at' => $relatedEvent->created_at,
                     'updated_at' => $relatedEvent->updated_at,
                 ];
-            })->toArray()
-        ]);
-    }
-
-    public function getEventsByTypes(string $type): Collection
-    {
-        $events = DB::connection($this->connection)->table($this->table)
-            ->where('type', $type)
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        $batchIds = $events->pluck('batch_id')->unique();
-
-        $eventsWithRelated = $events->map(function ($event) use ($batchIds) {
-            $relatedEvents = DB::connection($this->connection)->table($this->table)
-                ->where('batch_id', $event->batch_id)
-                ->where('id', '!=', $event->id)
-                ->get();
-
-            return [
-                'id' => $event->id,
-                'uuid' => $event->uuid,
-                'batch_id' => $event->batch_id,
-                'type' => $event->type,
-                'content' => $event->content,
-                'tags' => $event->tags,
-                'created_at' => $event->created_at,
-                'updated_at' => $event->updated_at,
-                'related_events' => $relatedEvents->map(function ($relatedEvent) {
-                    return [
-                        'id' => $relatedEvent->id,
-                        'uuid' => $relatedEvent->uuid,
-                        'batch_id' => $relatedEvent->batch_id,
-                        'type' => $relatedEvent->type,
-                        'content' => $relatedEvent->content,
-                        'tags' => $relatedEvent->tags,
-                        'created_at' => $relatedEvent->created_at,
-                        'updated_at' => $relatedEvent->updated_at,
-                    ];
-                })->toArray()
-            ];
-        });
-        return $eventsWithRelated;
+            })->toArray(),
+        ];
     }
 }
