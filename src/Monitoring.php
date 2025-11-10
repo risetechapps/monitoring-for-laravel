@@ -99,9 +99,14 @@ class Monitoring
         $repository = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
 
-        foreach (static::listWatchers() as $item) {
-            $watcher = $app->make($item, [
-                'options' => static::getOptions($item)
+        $configuredBuffer = (int) config('monitoring.buffer_size', self::$bufferSize);
+        self::$bufferSize = max(1, $configuredBuffer);
+
+        static::$watchers = [];
+
+        foreach (static::configuredWatchers() as $watcherClass => $options) {
+            $watcher = $app->make($watcherClass, [
+                'options' => $options,
             ]);
 
             static::$watchers[] = get_class($watcher);
@@ -109,57 +114,116 @@ class Monitoring
         }
     }
 
-    /**
-     * Retorna a lista de watchers que serão registrados.
-     *
-     * @return array Lista de classes de watchers.
-     */
-    protected static function listWatchers(): array
+    protected static function configuredWatchers(): array
+    {
+        $defaults = static::normalizeWatcherConfiguration(static::defaultWatchers());
+        $configured = config('monitoring.watchers');
+
+        $custom = is_array($configured)
+            ? static::normalizeWatcherConfiguration($configured)
+            : [];
+
+        foreach ($custom as $class => $config) {
+            if (isset($defaults[$class])) {
+                $defaults[$class]['enabled'] = $config['enabled'];
+                $defaults[$class]['options'] = array_replace_recursive(
+                    $defaults[$class]['options'],
+                    $config['options']
+                );
+            } else {
+                $defaults[$class] = $config;
+            }
+        }
+
+        $active = [];
+
+        foreach ($defaults as $class => $config) {
+            if (!($config['enabled'] ?? true)) {
+                continue;
+            }
+
+            $active[$class] = $config['options'] ?? [];
+        }
+
+        return $active;
+    }
+
+    protected static function defaultWatchers(): array
     {
         return [
-            Watchers\RequestWatcher::class,
-            Watchers\EventWatcher::class,
-            Watchers\ExceptionWatcher::class,
-            Watchers\CommandWatcher::class,
-            Watchers\GateWatcher::class,
-            Watchers\JobWatcher::class,
-            Watchers\QueueWatcher::class,
-            Watchers\ScheduleWatcher::class,
-            Watchers\NotificationWatcher::class,
-            Watchers\MailWatcher::class,
+            Watchers\RequestWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_http_methods' => [
+                        'options',
+                    ],
+                    'ignore_status_codes' => [],
+                    'ignore_paths' => [
+                        'telescope',
+                        'telescope-api',
+                    ],
+                ],
+            ],
+            Watchers\EventWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore' => [
+                        Watchers\RequestWatcher::class,
+                        Watchers\EventWatcher::class,
+                    ],
+                ],
+            ],
+            Watchers\ExceptionWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\CommandWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\GateWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\JobWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\QueueWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\ScheduleWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\NotificationWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\MailWatcher::class => ['enabled' => true, 'options' => []],
         ];
     }
 
-    /**
-     * Retorna as opções específicas para um watcher.
-     *
-     * @param $event type de watcher.
-     * @return array Opções para o watcher.
-     */
-    protected static function getOptions($event): array
+    protected static function normalizeWatcherConfiguration(array $watchers): array
     {
-        $options = [
-            Watchers\RequestWatcher::class => [
-                'ignore_http_methods' => [
-                    'options'
-                ],
-                'ignore_status_codes' => [
+        $normalized = [];
 
-                ],
-                'ignore_paths' => [
-                    'telescope',
-                    'telescope-api'
-                ]
-            ],
-            Watchers\EventWatcher::class => [
-                'ignore' => [
-                    Watchers\RequestWatcher::class,
-                    Watchers\EventWatcher::class
-                ]
-            ],
-        ];
+        foreach ($watchers as $key => $value) {
+            if (is_int($key)) {
+                $normalized[$value] = [
+                    'enabled' => true,
+                    'options' => [],
+                ];
+                continue;
+            }
 
-        return $options[$event] ?? [];
+            if (is_bool($value)) {
+                $normalized[$key] = [
+                    'enabled' => $value,
+                    'options' => [],
+                ];
+                continue;
+            }
+
+            if (is_array($value)) {
+                $enabled = $value['enabled'] ?? true;
+
+                if (array_key_exists('options', $value)) {
+                    $options = is_array($value['options']) ? $value['options'] : [];
+                } else {
+                    $options = $value;
+                    unset($options['enabled']);
+                    $options = is_array($options) ? $options : [];
+                }
+
+                $normalized[$key] = [
+                    'enabled' => (bool) $enabled,
+                    'options' => $options,
+                ];
+            }
+        }
+
+        return $normalized;
     }
 
     /**
@@ -183,7 +247,11 @@ class Monitoring
                 static::flushBuffer();
             }
         } catch (\Exception $exception) {
-
+            Log::error('Failed to buffer monitoring entry', [
+                'type' => $type,
+                'exception' => $exception,
+                'entry' => method_exists($entry, 'toArray') ? $entry->toArray() : null,
+            ]);
         }
     }
 
@@ -207,7 +275,12 @@ class Monitoring
             });
 
         } catch (\Exception $e) {
-            Log::critical('error register log', self::$buffer);
+            Log::critical('Failed to persist monitoring entries', [
+                'exception' => $e,
+                'entries' => array_map(function ($entry) {
+                    return method_exists($entry, 'toArray') ? $entry->toArray() : $entry;
+                }, self::$buffer),
+            ]);
         }
     }
 
