@@ -2,10 +2,12 @@
 
 namespace RiseTechApps\Monitoring\Repository;
 
+use Carbon\Carbon;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RiseTechApps\Monitoring\Jobs\SendMonitoringPayload;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use Throwable;
 
@@ -20,25 +22,73 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     protected int $retrySleep;
 
-    public function __construct(array|string $config)
+    protected bool $queueEnabled = false;
+
+    protected ?string $queueConnection = null;
+
+    protected ?string $queueName = null;
+
+    protected int $queueDelay = 0;
+
+    protected bool $forceSync;
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected array $config = [];
+
+    public function __construct(array|string $config, bool $forceSync = false)
     {
+        $this->forceSync = $forceSync;
+
         if (is_array($config)) {
+            $this->config = $config;
             $this->token = $config['token'] ?? '';
             $this->url = $config['endpoint'] ?? 'https://monitoring.app.br/api/logs';
             $this->timeout = (int) ($config['timeout'] ?? 10);
             $retry = $config['retry'] ?? [];
             $this->retryTimes = max(0, (int) ($retry['times'] ?? 0));
             $this->retrySleep = max(0, (int) ($retry['sleep'] ?? 0));
+
+            $queue = $config['queue'] ?? [];
+            $this->queueEnabled = (bool) ($queue['enabled'] ?? false);
+            $this->queueConnection = $queue['connection'] ?? null;
+            $this->queueName = $queue['queue'] ?? null;
+            $this->queueDelay = max(0, (int) ($queue['delay'] ?? 0));
         } else {
             $this->token = $config;
             $this->url = 'https://monitoring.app.br/api/logs';
             $this->timeout = 10;
             $this->retryTimes = 0;
             $this->retrySleep = 0;
+            $this->queueEnabled = false;
         }
     }
 
     public function create(array $data): void
+    {
+        if ($this->shouldQueue()) {
+            $dispatch = SendMonitoringPayload::dispatch($data, $this->config ?: $this->toArrayConfig());
+
+            if (!empty($this->queueConnection)) {
+                $dispatch->onConnection($this->queueConnection);
+            }
+
+            if (!empty($this->queueName)) {
+                $dispatch->onQueue($this->queueName);
+            }
+
+            if ($this->queueDelay > 0) {
+                $dispatch->delay(Carbon::now()->addSeconds($this->queueDelay));
+            }
+
+            return;
+        }
+
+        $this->sendSynchronously($data);
+    }
+
+    protected function sendSynchronously(array $data): void
     {
         $attempts = max(1, $this->retryTimes ?: 1);
 
@@ -50,14 +100,12 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
                     return;
                 }
 
-                $context = [
+                $context = $this->buildContext($data, [
                     'status' => $response->status(),
                     'body' => $response->body(),
-                    'endpoint' => $this->url,
-                    'entries' => count($data),
                     'attempt' => $attempt,
                     'max_attempts' => $attempts,
-                ];
+                ]);
 
                 if ($attempt < $attempts) {
                     Log::warning('Failed to send monitoring payload to HTTP endpoint, retrying', $context);
@@ -68,13 +116,11 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
                 Log::critical('Failed to send monitoring payload to HTTP endpoint after retries', $context);
             } catch (Throwable $exception) {
-                $context = [
-                    'endpoint' => $this->url,
+                $context = $this->buildContext($data, [
                     'exception' => $exception,
-                    'entries' => count($data),
                     'attempt' => $attempt,
                     'max_attempts' => $attempts,
-                ];
+                ]);
 
                 if ($attempt < $attempts) {
                     Log::warning('Exception sending monitoring payload to HTTP endpoint, retrying', $context);
@@ -168,15 +214,9 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     protected function request(): PendingRequest
     {
-        $request = Http::withHeaders([
+        return Http::withHeaders([
             'x-api-key' => $this->token,
         ])->timeout(max(1, $this->timeout));
-
-        if ($this->retryTimes > 0) {
-            $request = $request->retry($this->retryTimes, $this->retrySleep);
-        }
-
-        return $request;
     }
 
     protected function sleepBetweenRetries(): void
@@ -184,5 +224,42 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
         if ($this->retrySleep > 0) {
             usleep($this->retrySleep * 1000);
         }
+    }
+
+    protected function shouldQueue(): bool
+    {
+        return $this->queueEnabled && !$this->forceSync;
+    }
+
+    protected function buildContext(array $data, array $context = []): array
+    {
+        $entries = is_countable($data) ? count($data) : 1;
+
+        return array_merge([
+            'endpoint' => $this->url,
+            'entries' => $entries,
+        ], $context);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function toArrayConfig(): array
+    {
+        return [
+            'token' => $this->token,
+            'endpoint' => $this->url,
+            'timeout' => $this->timeout,
+            'retry' => [
+                'times' => $this->retryTimes,
+                'sleep' => $this->retrySleep,
+            ],
+            'queue' => [
+                'enabled' => $this->queueEnabled,
+                'connection' => $this->queueConnection,
+                'queue' => $this->queueName,
+                'delay' => $this->queueDelay,
+            ],
+        ];
     }
 }

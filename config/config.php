@@ -66,6 +66,12 @@ return [
                 'times' => env('MONITORING_HTTP_RETRY_TIMES', 3),
                 'sleep' => env('MONITORING_HTTP_RETRY_SLEEP', 100),
             ],
+            'queue' => [
+                'enabled' => env('MONITORING_HTTP_QUEUE', false),
+                'connection' => env('MONITORING_HTTP_QUEUE_CONNECTION'),
+                'queue' => env('MONITORING_HTTP_QUEUE_NAME'),
+                'delay' => env('MONITORING_HTTP_QUEUE_DELAY', 0),
+            ],
         ],
     ],
 ];

@@ -44,7 +44,8 @@ Após publicar o arquivo de configuração (`php artisan vendor:publish --tag=mo
 - **`environments.except` / `MONITORING_ENV_EXCEPT`** &mdash; ambientes que devem ser ignorados mesmo que estejam em `only`.
 - **`buffer_size` / `MONITORING_BUFFER_SIZE`** &mdash; número de entradas acumuladas antes de persistir em lote.
 - **`watchers`** &mdash; habilite/desabilite watchers individualmente e ajuste opções como métodos HTTP ignorados.
-- **`drivers`** &mdash; configure a conexão SQL ou o endpoint HTTP, inclusive timeout e tentativas de retry.
+- **`drivers`** &mdash; configure a conexão SQL ou o endpoint HTTP, inclusive timeout, tentativas de retry e, para o driver HTTP, o envio assíncrono via fila.
+- **`drivers.http.queue`** &mdash; defina `MONITORING_HTTP_QUEUE=true` para delegar as tentativas ao queue worker e use as variáveis `MONITORING_HTTP_QUEUE_CONNECTION`, `MONITORING_HTTP_QUEUE_NAME` e `MONITORING_HTTP_QUEUE_DELAY` para personalizar conexão, fila e atraso inicial.
 - **`response_macros` / `MONITORING_RESPONSE_MACROS`** &mdash; desative se não quiser registrar os helpers `jsonSuccess`, `jsonError`, etc.
 
 ---
