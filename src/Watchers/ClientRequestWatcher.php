@@ -9,6 +9,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Monitoring;
+use RiseTechApps\Monitoring\Repository\MonitoringRepositoryHttp;
 use RiseTechApps\Monitoring\Traits\FormatsClosure\FormatsClosure;
 use Symfony\Component\HttpFoundation\File\File;
 
@@ -40,7 +41,7 @@ class ClientRequestWatcher extends Watcher
             'payload' => $this->payload($this->input($event->request)),
         ])->tags([$event->request->toPsrRequest()->getUri()->getHost()]);
 
-        Monitoring::recordEvent($entry);
+        Monitoring::recordClientRequest($entry);
     }
 
     /**
@@ -68,7 +69,7 @@ class ClientRequestWatcher extends Watcher
                 'duration' => $this->duration($event->response),
             ])->tags([$event->request->toPsrRequest()->getUri()->getHost()]);
 
-            Monitoring::recordEvent($entry);
+            Monitoring::recordClientRequest($entry);
         } catch (\Exception $exception) {
 
         }
@@ -77,6 +78,11 @@ class ClientRequestWatcher extends Watcher
     protected function shouldIgnoreHost($event): bool
     {
         $host = $event->request->toPsrRequest()->getUri()->getHost();
+
+        $repositoryHost = parse_url(MonitoringRepositoryHttp::$HOST, PHP_URL_HOST);
+
+
+        if($host === $repositoryHost) return true;
 
         return in_array($host, Arr::get($this->options, 'ignore_hosts', []));
     }
