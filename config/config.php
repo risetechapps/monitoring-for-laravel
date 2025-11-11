@@ -11,8 +11,6 @@ return [
 
     'buffer_size' => (int) env('MONITORING_BUFFER_SIZE', 5),
 
-    'response_macros' => env('MONITORING_RESPONSE_MACROS', true),
-
     'watchers' => [
         \RiseTechApps\Monitoring\Watchers\RequestWatcher::class => [
             'enabled' => true,
@@ -44,9 +42,13 @@ return [
         \RiseTechApps\Monitoring\Watchers\ScheduleWatcher::class => ['enabled' => true],
         \RiseTechApps\Monitoring\Watchers\NotificationWatcher::class => ['enabled' => true],
         \RiseTechApps\Monitoring\Watchers\MailWatcher::class => ['enabled' => true],
+        \RiseTechApps\Monitoring\Watchers\ClientRequestWatcher::class => ['enabled' => true],
     ],
 
     'drivers' => [
+
+        'db_connection' => env('DB_CONNECTION'),
+
         'mysql' => [
             'connection' => env('DB_CONNECTION', 'mysql'),
         ],
