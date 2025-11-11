@@ -3,7 +3,8 @@
 namespace RiseTechApps\Monitoring;
 
 use Closure;
-use Illuminate\Console\Application;
+use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
@@ -48,7 +49,7 @@ class Monitoring
      * Tamanho do buffer. Quando o buffer atinge este tamanho, os dados são gravados no banco de dados.
      * @var int
      */
-    protected static int $bufferSize = 5;
+    protected static int $bufferSize = 10;
 
     /**
      * Interface para o repositório de armazenamento de logs.
@@ -90,8 +91,10 @@ class Monitoring
      * Inicializa o sistema de monitoramento e registra os watchers.
      *
      * @param $app Application Laravel, utilizada para resolução de dependências.
+     *
+     * @throws BindingResolutionException
      */
-    public static function start($app): void
+    public static function start(Application $app): void
     {
 
         static::$enabled = (bool)config('monitoring.enabled');
