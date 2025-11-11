@@ -5,11 +5,10 @@ namespace RiseTechApps\Monitoring\Watchers;
 abstract class Watcher
 {
 
-    public $options = [];
+    public array $options = [];
 
     public function __construct(array $options = [])
     {
-
         $this->options = $options;
     }
 
