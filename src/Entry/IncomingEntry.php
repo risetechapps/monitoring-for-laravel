@@ -5,15 +5,14 @@ namespace RiseTechApps\Monitoring\Entry;
 
 use Carbon\Carbon;
 use Illuminate\Support\Str;
-use RiseTechApps\Monitoring\Features\Device\Device;
 use RiseTechApps\Monitoring\Services\BatchIdService;
+use RiseTechApps\RiseTools\Features\Device\Device;
 
 class IncomingEntry
 {
     /** Identificador único
      * @type  string
      **/
-
     public $uuid;
 
     /**   Identificador único para registro em lotes, toda operação vai ter o mesmo uuid
@@ -22,7 +21,7 @@ class IncomingEntry
     public $batchId;
 
     /** Tipo de evento
-     * @var \RiseTechApps\Monitoring\Entry $type
+     * @var EntryType $type
      * */
     public $type;
 
@@ -54,7 +53,7 @@ class IncomingEntry
 
     public function __construct(array $content, string $uuid = null)
     {
-        $this->uuid = $uuid ?: (string)Str::orderedUuid();
+        $this->uuid = $uuid ?: self::generateUuid();
 
         $this->recordedAt = now();
 
@@ -68,7 +67,6 @@ class IncomingEntry
         $this->batchIdService = app(BatchIdService::class);
         $this->batchIdService->setBatchId((string)Str::orderedUuid());
     }
-
 
     public static function make(...$arguments): static
     {
@@ -123,6 +121,22 @@ class IncomingEntry
         $this->tags = array_unique(array_merge($this->tags, $tags));
 
         return $this;
+    }
+
+    protected static function generateUuid(): string
+    {
+        // Tenta usar UUIDv7 (se disponível)
+        if (class_exists(\Symfony\Component\Uid\Uuid::class) && method_exists(\Symfony\Component\Uid\Uuid::class, 'v7')) {
+            return \Symfony\Component\Uid\Uuid::v7()->toRfc4122();
+        }
+
+        // Fallback: UUID ordenado (tipo v1-like)
+        if (method_exists(Str::class, 'orderedUuid')) {
+            return (string) Str::orderedUuid();
+        }
+
+        // Último fallback: UUID v4 puro
+        return (string) Str::uuid();
     }
 
     /** Função para retornar array de todos os dados
