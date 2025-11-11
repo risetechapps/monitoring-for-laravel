@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\View\View;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Monitoring;
+use RiseTechApps\RiseTools\Features\Device\Device;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -59,7 +60,7 @@ class RequestWatcher extends Watcher
             $startTime = defined('LARAVEL_START') ? LARAVEL_START : $handled->request->server('REQUEST_TIME_FLOAT');
 
             $entry = IncomingEntry::make([
-                'ip_address' => $handled->request->ip(),
+                'ip_address' => Device::getClientPublicIp(),
                 'uri' => str_replace($handled->request->root(), '', $handled->request->fullUrl()) ?: '/',
                 'method' => $handled->request->method(),
                 'controller_action' => optional($handled->request->route())->getActionName(),
