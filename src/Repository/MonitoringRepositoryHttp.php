@@ -2,10 +2,12 @@
 
 namespace RiseTechApps\Monitoring\Repository;
 
+use Carbon\Carbon;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use RiseTechApps\Monitoring\Jobs\SendMonitoringPayloadJob;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use Throwable;
 
@@ -20,22 +22,41 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     protected int $retrySleep;
 
-    public function __construct(array|string $config)
+    protected bool $forceSync;
+
+    /**
+     * @var array<string, mixed>
+     */
+    protected array $config = [];
+
+    protected bool $isJob = false;
+
+    public static string $HOST = "https://monitoring.free.beeceptor.com";
+
+    public function __construct(array|string $config, bool $forceSync = false)
     {
+        $this->forceSync = $forceSync;
+
         if (is_array($config)) {
+            $this->config = $config;
             $this->token = $config['token'] ?? '';
-            $this->url = $config['endpoint'] ?? 'https://monitoring.app.br/api/logs';
-            $this->timeout = (int) ($config['timeout'] ?? 10);
+            $this->url = self::$HOST;
+            $this->timeout = (int)($config['timeout'] ?? 10);
             $retry = $config['retry'] ?? [];
-            $this->retryTimes = max(0, (int) ($retry['times'] ?? 0));
-            $this->retrySleep = max(0, (int) ($retry['sleep'] ?? 0));
+            $this->retryTimes = max(0, (int)($retry['times'] ?? 0));
+            $this->retrySleep = max(0, (int)($retry['sleep'] ?? 0));
         } else {
             $this->token = $config;
-            $this->url = 'https://monitoring.app.br/api/logs';
+            $this->url = self::$HOST;
             $this->timeout = 10;
             $this->retryTimes = 0;
             $this->retrySleep = 0;
         }
+    }
+
+    public function setIsJob(): void
+    {
+        $this->isJob = true;
     }
 
     public function create(array $data): void
@@ -43,20 +64,37 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
         try {
             $response = $this->request()->post($this->url, $data);
 
-            if ($response->status() !== 202) {
-                Log::critical('Failed to send monitoring payload to HTTP endpoint', [
-                    'status' => $response->status(),
-                    'body' => $response->body(),
-                    'endpoint' => $this->url,
-                    'entries' => count($data),
-                ]);
+            if ($response->status() === 202) {
+                return;
+            }
+
+            if (!$this->isJob) {
+                $dispatch = SendMonitoringPayloadJob::dispatch($data, $this->config ?: $this->toArrayConfig());
+
+                $dispatch->delay(Carbon::now()->addMinute());
+            }
+
+            $context = [
+                'status' => $response->status(),
+                'body' => $response->body(),
+                'context' => $data
+            ];
+
+            Log::critical('Failed to send monitoring payload to HTTP endpoint after retries', $context);
+
+            if ($this->isJob) {
+                throw new \Exception('Failed to send monitoring payload to HTTP endpoint after retries', $context);
             }
         } catch (Throwable $exception) {
-            Log::critical('Exception sending monitoring payload to HTTP endpoint', [
-                'endpoint' => $this->url,
-                'exception' => $exception,
-                'entries' => count($data),
-            ]);
+            $context = [
+                'context' => $data
+            ];
+
+            Log::critical('Exception sending monitoring payload to HTTP endpoint after retries', $context);
+
+            if ($this->isJob) {
+                throw new \Exception('Failed to send monitoring payload to HTTP endpoint after retries', $context);
+            }
         }
     }
 
@@ -138,14 +176,31 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     protected function request(): PendingRequest
     {
-        $request = Http::withHeaders([
+        return Http::withHeaders([
             'x-api-key' => $this->token,
         ])->timeout(max(1, $this->timeout));
+    }
 
-        if ($this->retryTimes > 0) {
-            $request = $request->retry($this->retryTimes, $this->retrySleep);
+    protected function sleepBetweenRetries(): void
+    {
+        if ($this->retrySleep > 0) {
+            usleep($this->retrySleep * 1000);
         }
+    }
 
-        return $request;
+    /**
+     * @return array<string, mixed>
+     */
+    protected function toArrayConfig(): array
+    {
+        return [
+            'token' => $this->token,
+            'endpoint' => $this->url,
+            'timeout' => $this->timeout,
+            'retry' => [
+                'times' => $this->retryTimes,
+                'sleep' => $this->retrySleep,
+            ],
+        ];
     }
 }
