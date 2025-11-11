@@ -24,6 +24,11 @@ trait Record
         static::record(EntryType::EVENT, $entry);
     }
 
+    public static function recordClientRequest(IncomingEntry $entry): void
+    {
+        static::record(EntryType::CLIENT_REQUEST, $entry);
+    }
+
     public static function recordException(IncomingEntry $entry): void
     {
         static::record(EntryType::EXCEPTION, $entry);
