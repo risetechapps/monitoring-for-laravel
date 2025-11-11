@@ -3,17 +3,15 @@
 namespace RiseTechApps\Monitoring;
 
 use Illuminate\Foundation\Http\Events\RequestHandled;
-use Illuminate\Routing\ResponseFactory;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
-use RiseTechApps\Monitoring\Features\Device\Device;
 use RiseTechApps\Monitoring\Http\Middleware\DisableMonitoringMiddleware;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
-use RiseTechApps\Monitoring\Repository\MonitoringRepository;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryHttp;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryMysql;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryPgsql;
 use RiseTechApps\Monitoring\Services\BatchIdService;
+use RiseTechApps\RiseTools\Features\Device\Device;
 
 class MonitoringServiceProvider extends ServiceProvider
 {
@@ -26,6 +24,13 @@ class MonitoringServiceProvider extends ServiceProvider
         app('router')->aliasMiddleware('monitoring.disable', DisableMonitoringMiddleware::class);
 
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+
+
+        if ($this->app->runningInConsole()) {
+            $this->publishes([
+                __DIR__ . '/../config/config.php' => config_path('monitoring.php'),
+            ], 'config');
+        }
 
         Monitoring::start($this->app);
 
@@ -64,46 +69,5 @@ class MonitoringServiceProvider extends ServiceProvider
         $this->app->singleton(Device::class, function ($app) {
             return new Device();
         });
-
-        if (config('monitoring.response_macros', true)) {
-            $this->registerMacros();
-        }
-    }
-
-    protected function registerMacros(): void
-    {
-
-        if(!ResponseFactory::hasMacro('jsonSuccess')){
-            ResponseFactory::macro('jsonSuccess', function ($data = []) {
-                $response = ['success' => true];
-                if (!empty($data)) $response['data'] = $data;
-                return response()->json($response);
-            });
-        }
-
-        if(!ResponseFactory::hasMacro('jsonError')){
-            ResponseFactory::macro('jsonError', function ($data = null) {
-                $response = ['success' => false];
-                if (!is_null($data)) $response['message'] = $data;
-                return response()->json($response, 412);
-            });
-        }
-
-        if(!ResponseFactory::hasMacro('jsonGone')) {
-            ResponseFactory::macro('jsonGone', function ($data = null) {
-                $response = ['success' => false];
-                if (!is_null($data)) $response['message'] = $data;
-                return response()->json($response, 410);
-            });
-        }
-
-        if(!ResponseFactory::hasMacro('jsonNotValidated')) {
-            ResponseFactory::macro('jsonNotValidated', function ($message = null, $error = null) {
-                $response = ['success' => false];
-                if (!is_null($message)) $response['message'] = $message;
-
-                return response()->json($response, 422);
-            });
-        }
     }
 }
