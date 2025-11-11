@@ -4,6 +4,7 @@ namespace RiseTechApps\Monitoring\Entry;
 
 
 use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 use RiseTechApps\RiseTools\Features\Device\Device;
@@ -108,8 +109,6 @@ class IncomingEntry
             ],
         ]);
 
-        $this->tags(['Auth' =>  $user->getAuthIdentifier()]);
-
         return $this;
     }
 
@@ -151,6 +150,7 @@ class IncomingEntry
             'type' => $this->type,
             'content' => json_encode($this->content),
             'tags' => json_encode($this->tags),
+            'user' => $this->user instanceof Model ? $this->user->getKey() : $this->user,
             'created_at' => $this->recordedAt->toDateTimeString(),
             'device' => Device::info()
         ];
