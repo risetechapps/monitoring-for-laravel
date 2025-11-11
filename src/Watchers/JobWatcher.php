@@ -8,6 +8,7 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Queue;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
+use RiseTechApps\Monitoring\Jobs\SendMonitoringPayloadJob;
 use RiseTechApps\Monitoring\Monitoring;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 use RiseTechApps\Monitoring\Services\ExceptionContext;
@@ -54,6 +55,7 @@ class JobWatcher extends Watcher
         $batchId = Str::uuid()->toString();
 
         if(Monitoring::isEnabled()){
+            if($payload['displayName'] === SendMonitoringPayloadJob::class) return (object)['batch_id' => $batchId];
             try {
 
                 $content = array_merge([
@@ -84,6 +86,8 @@ class JobWatcher extends Watcher
     {
         try {
             if(!Monitoring::isEnabled()) return;
+
+            if($event['displayName'] === SendMonitoringPayloadJob::class) return;
 
             $batchId = $event->job->payload()['batch_id'] ?? $event->job->uuid();
 
