@@ -1,11 +1,4 @@
-<<<<<<< HEAD
 preset: laravel
 
 disabled:
   - single_class_element_per_statement
-=======
-preset: laravel
-
-disabled:
-  - single_class_element_per_statement
->>>>>>> origin/main
