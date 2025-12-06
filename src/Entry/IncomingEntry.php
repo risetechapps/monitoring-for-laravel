@@ -155,7 +155,7 @@ class IncomingEntry
             'batch_id' => $this->batchIdService->getBatchId(),
             'type' => $this->type,
             'content' => json_encode($this->content),
-            'tags' => json_encode($this->tags),
+            'tags' => $this->tags,
             'user' => !is_null($this->user) ? [
                 'id' => $this->user->getAuthIdentifier(),
                 'name' => $this->user->name ?? null,
