@@ -31,7 +31,7 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
 
     protected bool $isJob = false;
 
-    public static string $HOST = "https://monitoring.free.beeceptor.com";
+    public static string $HOST = "https://monitoring.app.br/api/v1/store/monitoring";
 
     public function __construct(array|string $config, bool $forceSync = false)
     {
@@ -64,7 +64,7 @@ class MonitoringRepositoryHttp implements MonitoringRepositoryInterface
         try {
             $response = $this->request()->post($this->url, $data);
 
-            if ($response->status() === 202) {
+            if ($response->status() === 202 || $response->status() === 200) {
                 return;
             }
 
