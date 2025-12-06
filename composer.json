@@ -20,10 +20,10 @@
     "require": {
         "php": "^8.3",
         "illuminate/support": "^12.0",
-        "aws/aws-sdk-php": "^3.321",
+        "aws/aws-sdk-php": "^3.363",
         "hisorange/browser-detect": "^4.5",
-        "risetechapps/risetools": "^1.0.0"
-
+        "risetechapps/risetools": "^1.1.0",
+        "laravel/sanctum": "^4.0"
     },
     "require-dev": {
         "orchestra/testbench": "^9.0",
