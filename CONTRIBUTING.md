@@ -1,55 +1,67 @@
-# Contributing
+# 🤝 Como Contribuir
 
-Contributions are **welcome** and will be fully **credited**.
+Ficamos muito felizes pelo seu interesse em contribuir para o **risetechapps/monitoring-for-laravel**!
+Obrigado por dedicar seu tempo para ajudar.
 
-Please read and understand the contribution guide before creating an issue or pull request.
+As diretrizes a seguir ajudarão você a navegar no processo de contribuição.
 
-## Etiquette
+---
 
-This project is open source, and as such, the maintainers give their free time to build and maintain the source code
-held within. They make the code freely available in the hope that it will be of use to other developers. It would be
-extremely unfair for them to suffer abuse or anger for their hard work.
+## 🐞 Reportando Bugs (Erros)
 
-Please be considerate towards maintainers when raising issues or presenting pull requests. Let's show the
-world that developers are civilized and selfless people.
+Se você encontrar um problema ou um erro, por favor, abra uma 'Issue' no nosso repositório.
 
-It's the duty of the maintainer to ensure that all submissions to the project are of sufficient
-quality to benefit the project. Many developers have different skillsets, strengths, and weaknesses. Respect the maintainer's decision, and do not be upset or abusive if your submission is not used.
+1.  **Verifique Antes:** Procure nas Issues existentes para garantir que o erro ainda não foi reportado.
+2.  **Use o Template:** Use o template de "Bug Report" fornecido.
+3.  **Inclua Detalhes:** Seja o mais específico possível. **É fundamental incluir:**
+    * **Passos para reproduzir:** O que exatamente você fez para encontrar o erro.
+    * **Comportamento Esperado vs. Atual:** O que deveria ter acontecido e o que realmente aconteceu.
+    * **Seu Ambiente:** Versão do [Nome do Projeto], Sistema Operacional, Navegador (se aplicável).
 
-## Viability
+---
 
-When requesting or submitting new features, first consider whether it might be useful to others. Open
-source projects are used by many developers, who may have entirely different needs to your own. Think about
-whether or not your feature is likely to be used by other users of the project.
+## ✨ Sugerindo Novas Funcionalidades (Features)
 
-## Procedure
+Queremos que o projeto cresça! Se você tem uma ideia para um recurso:
 
-Before filing an issue:
+1.  **Abra uma 'Feature Request' (Issue):** Antes de começar a desenvolver, abra uma Issue para discutirmos a ideia.
+2.  **Justificativa:** Explique a necessidade e como o novo recurso irá beneficiar o projeto e os usuários.
 
-- Attempt to replicate the problem, to ensure that it wasn't a coincidental incident.
-- Check to make sure your feature suggestion isn't already present within the project.
-- Check the pull requests tab to ensure that the bug doesn't have a fix in progress.
-- Check the pull requests tab to ensure that the feature isn't already in progress.
+---
 
-Before submitting a pull request:
+## 💻 Contribuição de Código
 
-- Check the codebase to ensure that your feature doesn't already exist.
-- Check the pull requests to ensure that another person hasn't already submitted the feature or fix.
+### 1. Preparação
 
-## Requirements
+1.  Faça um **Fork** do nosso repositório.
+2.  Clone o repositório para sua máquina local.
+3.  Crie uma nova *branch* para sua contribuição:
+    ```bash
+    git checkout -b feature/nome-da-sua-feature-ou-bugfix
+    ```
 
-If the project maintainer has any additional requirements, you will find them listed here.
+### 2. Desenvolvimento
 
-- **[PSR-2 Coding Standard](https://github.com/php-fig/fig-standards/blob/master/accepted/PSR-2-coding-style-guide.md)** - The easiest way to apply the conventions is to install [PHP Code Sniffer](https://pear.php.net/package/PHP_CodeSniffer).
+* **Baseie-se na Branch:** Todo o trabalho deve ser baseado na *branch* `main`.
+* **Estilo de Código:** Siga o padrão de código existente. [Opcional: Adicionar link para um guia de estilo ou ferramenta de formatação].
+* **Testes:** Certifique-se de que todos os testes existentes continuam passando e adicione testes para o novo código/funcionalidade, se necessário.
 
-- **Add tests!** - Your patch won't be accepted if it doesn't have tests.
+### 3. Commit e Pull Request (PR)
 
-- **Document any change in behaviour** - Make sure the `README.md` and any other relevant documentation are kept up-to-date.
+1.  Faça o *commit* das suas mudanças. **Use mensagens de *commit* claras e descritivas!**
+    * **Exemplo:** `fix: Corrige erro de cálculo no módulo X` ou `feat: Adiciona suporte para tradução em Português`.
+2.  Envie suas mudanças para o seu *fork*:
+    ```bash
+    git push origin feature/nome-da-sua-feature-ou-bugfix
+    ```
+3.  Abra um **Pull Request (PR)** da sua *branch* para a *branch* `main` do repositório principal.
 
-- **Consider our release cycle** - We try to follow [SemVer v2.0.0](https://semver.org/). Randomly breaking public APIs is not an option.
+---
 
-- **One pull request per feature** - If you want to do more than one thing, send multiple pull requests.
+## 📢 Código de Conduta
 
-- **Send coherent history** - Make sure each individual commit in your pull request is meaningful. If you had to make multiple intermediate commits while developing, please [squash them](https://www.git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Changing-Multiple-Commit-Messages) before submitting.
+Ao participar deste projeto, você concorda em seguir nosso [Código de Conduta](CODE_OF_CONDUCT.md).
 
-**Happy coding**!
+***
+
+*Obrigado novamente por contribuir!*
