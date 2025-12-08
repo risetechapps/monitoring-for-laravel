@@ -81,9 +81,10 @@ class ClientRequestWatcher extends Watcher
         $host = $event->request->toPsrRequest()->getUri()->getHost();
 
         $repositoryHost = parse_url(MonitoringRepositoryHttp::$HOST, PHP_URL_HOST);
+        $repositoryHostApi = parse_url(MonitoringRepositoryHttp::$HOST_API, PHP_URL_HOST);
 
 
-        if($host === $repositoryHost) return true;
+        if ($host === $repositoryHost || $host === $repositoryHostApi) return true;
 
         return in_array($host, Arr::get($this->options, 'ignore_hosts', []));
     }
