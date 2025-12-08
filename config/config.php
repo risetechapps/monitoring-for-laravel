@@ -7,7 +7,7 @@ return [
 
     'enabled' => env('MONITORING_ENABLED', true),
 
-    'driver' => env('MONITORING_DRIVER', 'mysql'),
+    'driver' => env('MONITORING_DRIVER', 'single'),
 
     'buffer_size' => (int)env('MONITORING_BUFFER_SIZE', 5),
 
@@ -47,7 +47,7 @@ return [
 
     'drivers' => [
 
-        'db_connection' => env('DB_CONNECTION'),
+//        'db_connection' => env('DB_CONNECTION'),
 
         'mysql' => [
             'connection' => env('DB_CONNECTION', 'mysql'),
@@ -58,5 +58,9 @@ return [
         'http' => [
             'token' => env('MONITORING_HTTP_TOKEN', ''),
         ],
+
+        'single' => [
+            'path' => storage_path('logs/monitoring.log'),
+        ]
     ],
 ];

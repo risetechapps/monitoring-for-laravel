@@ -2,9 +2,11 @@
 
 namespace RiseTechApps\Monitoring\Repository;
 
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RiseTechApps\Monitoring\Entry\EntryType;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 
 class MonitoringRepository implements MonitoringRepositoryInterface
@@ -122,11 +124,16 @@ class MonitoringRepository implements MonitoringRepositoryInterface
      * Exemplo de entrada:
      * ["action" => "index"]
      */
-    public function getEventsByTags(array $tags): Collection
+    public function getEventsByTags(): Collection
+    {
+        return collect(EntryType::getTypes());
+    }
+
+    public function getByBatch(string $id): Collection
     {
         $events = DB::connection($this->connection)
             ->table($this->table)
-            ->whereJsonContains('tags', $tags)
+            ->where('batch_id', $id)
             ->orderBy('created_at', 'DESC')
             ->get();
 
@@ -134,22 +141,97 @@ class MonitoringRepository implements MonitoringRepositoryInterface
             return collect();
         }
 
-        $batchIds = $events->pluck('batch_id')->unique()->values();
+        return collect($events);
+    }
 
-        $related = DB::connection($this->connection)
+    public function getLast24Hours(): Collection
+    {
+        $events = DB::connection($this->connection)
             ->table($this->table)
-            ->whereIn('batch_id', $batchIds)
-            ->orderBy('created_at', 'DESC')
-            ->get()
-            ->groupBy('batch_id');
+            ->where('request_timestamp', '>=', Carbon::now()->subHours(24))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
 
-        return $events->map(function ($event) use ($related) {
-            $relatedEvents = $related->get($event->batch_id, collect())
-                ->reject(fn($row) => $row->id === $event->id)
-                ->values();
+        if ($events->isEmpty()) {
+            return collect();
+        }
 
-            return $this->formatEvent($event, $relatedEvents);
-        });
+        return collect($events);
+    }
+
+    public function getLast7Days(): Collection
+    {
+        $events = DB::connection($this->connection)
+            ->table($this->table)
+            ->where('request_timestamp', '>=', Carbon::now()->subDays(7))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        return collect($events);
+    }
+
+    public function getLast15Days(): Collection
+    {
+        $events = DB::connection($this->connection)
+            ->table($this->table)
+            ->where('request_timestamp', '>=', Carbon::now()->subDays(15))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        return collect($events);
+    }
+
+    public function getLast30Days(): Collection
+    {
+        $events = DB::connection($this->connection)
+            ->table($this->table)
+            ->where('request_timestamp', '>=', Carbon::now()->subDays(30))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        return collect($events);
+    }
+
+    public function getLast60Days(): Collection
+    {
+        $events = DB::connection($this->connection)
+            ->table($this->table)
+            ->where('request_timestamp', '>=', Carbon::now()->subDays(60))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        return collect($events);
+    }
+
+    public function getLast90Days(): Collection
+    {
+        $events = DB::connection($this->connection)
+            ->table($this->table)
+            ->where('request_timestamp', '>=', Carbon::now()->subDays(90))
+            ->orderBy('request_timestamp', 'DESC')
+            ->get();
+
+        if ($events->isEmpty()) {
+            return collect();
+        }
+
+        return collect($events);
     }
 
     /**
@@ -160,23 +242,23 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         $related = $related ?: collect();
 
         return [
-            'id'         => $event->id,
-            'uuid'       => $event->uuid,
-            'batch_id'   => $event->batch_id,
-            'type'       => $event->type,
-            'content'    => $this->decodeIfJson($event->content),
-            'tags'       => $this->decodeIfJson($event->tags),
-            'user'       => $this->decodeIfJson($event->user ?? null),
-            'device'     => $this->decodeIfJson($event->device ?? null),
+            'id' => $event->id,
+            'uuid' => $event->uuid,
+            'batch_id' => $event->batch_id,
+            'type' => $event->type,
+            'content' => $this->decodeIfJson($event->content),
+            'tags' => $this->decodeIfJson($event->tags),
+            'user' => $this->decodeIfJson($event->user ?? null),
+            'device' => $this->decodeIfJson($event->device ?? null),
             'created_at' => $event->created_at,
             'updated_at' => $event->updated_at,
             'related_events' => $related->map(fn($r) => [
-                'id'         => $r->id,
-                'uuid'       => $r->uuid,
-                'batch_id'   => $r->batch_id,
-                'type'       => $r->type,
-                'content'    => $this->decodeIfJson($r->content),
-                'tags'       => $this->decodeIfJson($r->tags),
+                'id' => $r->id,
+                'uuid' => $r->uuid,
+                'batch_id' => $r->batch_id,
+                'type' => $r->type,
+                'content' => $this->decodeIfJson($r->content),
+                'tags' => $this->decodeIfJson($r->tags),
                 'created_at' => $r->created_at,
                 'updated_at' => $r->updated_at,
             ]),
@@ -226,9 +308,9 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         }
 
         if (method_exists(Str::class, 'orderedUuid')) {
-            return (string) Str::orderedUuid();
+            return (string)Str::orderedUuid();
         }
 
-        return (string) Str::uuid();
+        return (string)Str::uuid();
     }
 }
