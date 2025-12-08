@@ -18,5 +18,24 @@ class EntryType
     public const SCHEDULED_TASK = 'schedule';
     public const CLIENT_REQUEST = 'client_request';
     public const GATE = 'gate';
+
+    public static function getTypes(): array
+    {
+        return [
+            self::COMMAND,
+            self::EVENT,
+            self::EXCEPTION,
+            self::JOB,
+            self::LOG,
+            self::MAIL,
+            self::MODEL,
+            self::NOTIFICATION,
+            self::QUERY,
+            self::REQUEST,
+            self::SCHEDULED_TASK,
+            self::CLIENT_REQUEST,
+            self::GATE,
+        ];
+    }
 }
 
