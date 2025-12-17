@@ -87,7 +87,10 @@ class JobWatcher extends Watcher
         try {
             if(!Monitoring::isEnabled()) return;
 
-            if($event['displayName'] === SendMonitoringPayloadJob::class) return;
+            if (data_get($event, 'job') instanceof SendMonitoringPayloadJob ||
+                data_get($event, 'displayName') === SendMonitoringPayloadJob::class) {
+                return;
+            }
 
             $batchId = $event->job->payload()['batch_id'] ?? $event->job->uuid();
 
