@@ -54,7 +54,7 @@ return [
     // Habilita ou desabilita o monitoramento globalmente
     'enabled' => env('MONITORING_ENABLED', true),
 
-    // Driver de armazenamento: 'single', 'mysql', 'pgsql' ou 'http'
+    // Driver de armazenamento: 'single' ou 'database'
     'driver' => env('MONITORING_DRIVER', 'single'),
 
     // Quantidade de entradas acumuladas antes de persistir (buffer)
@@ -72,8 +72,6 @@ return [
 |---|---|---|
 | `MONITORING_ENABLED` | `true` | Liga/desliga o monitoramento |
 | `MONITORING_DRIVER` | `single` | Driver de armazenamento |
-| `MONITORING_BUFFER_SIZE` | `5` | Tamanho do buffer de entradas |
-| `MONITORING_HTTP_TOKEN` | `""` | Token de autenticação para o driver HTTP |
 
 ---
 
@@ -117,21 +115,6 @@ DB_CONNECTION=pgsql
 ```php
 'pgsql' => [
     'connection' => env('DB_CONNECTION', 'pgsql'),
-],
-```
-
-### `http` — HTTP Remoto
-
-Envia os eventos para a plataforma [monitoring.app.br](https://monitoring.app.br) via API. Em caso de falha, um job é agendado para reenvio automático em 1 minuto.
-
-```env
-MONITORING_DRIVER=http
-MONITORING_HTTP_TOKEN=seu_token_aqui
-```
-
-```php
-'http' => [
-    'token' => env('MONITORING_HTTP_TOKEN', ''),
 ],
 ```
 
@@ -524,7 +507,7 @@ MONITORING_BUFFER_SIZE=10
 
 ## Consultando os Registros de Monitoramento
 
-O pacote fornece um repositório com métodos padronizados para leitura dos eventos, disponíveis para os drivers `mysql`, `pgsql` e `http`. O driver `single` (arquivo) **não suporta leitura** — seus métodos retornam coleções vazias.
+O pacote fornece um repositório com métodos padronizados para leitura dos eventos, disponíveis para os drivers `dabase`. O driver `single` (arquivo) **não suporta leitura** — seus métodos retornam coleções vazias.
 
 ### Injetando o Repositório
 
@@ -640,19 +623,19 @@ $monitoring->getLast90Days();   // Últimos 90 dias
 
 ### Suporte por Driver
 
-| Método | `mysql` | `pgsql` | `http` | `single` |
-|---|:---:|:---:|:---:|:---:|
-| `getAllEvents()` | ✅ | ✅ | ✅ | ❌ |
-| `getEventById()` | ✅ | ✅ | ✅ | ❌ |
-| `getEventsByTypes()` | ✅ | ✅ | ✅ | ❌ |
-| `getEventsByTags()` | ✅ | ✅ | ✅ | ✅* |
-| `getByBatch()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast24Hours()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast7Days()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast15Days()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast30Days()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast60Days()` | ✅ | ✅ | ✅ | ❌ |
-| `getLast90Days()` | ✅ | ✅ | ✅ | ❌ |
+| Método | `database` | `single` |
+|---|:----------:|:--------:|
+| `getAllEvents()` |     ✅      | ❌ |
+| `getEventById()` |     ✅      | ❌ |
+| `getEventsByTypes()` |     ✅      | ❌ |
+| `getEventsByTags()` |     ✅      | ✅* |
+| `getByBatch()` |     ✅      | ❌ |
+| `getLast24Hours()` |     ✅      | ❌ |
+| `getLast7Days()` |     ✅      | ❌ |
+| `getLast15Days()` |     ✅      | ❌ |
+| `getLast30Days()` |     ✅      | ❌ |
+| `getLast60Days()` |     ✅      | ❌ |
+| `getLast90Days()` |     ✅      | ❌ |
 
 > *`getEventsByTags()` no driver `single` retorna apenas a lista de tipos disponíveis.
 
