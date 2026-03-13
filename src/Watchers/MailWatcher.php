@@ -10,16 +10,6 @@ use Symfony\Component\Mime\Part\AbstractPart;
 
 class MailWatcher extends Watcher
 {
-
-    /**
-     * Registra o ouvinte para o evento de e-mail enviada.
-     *
-     * Este método configura um ouvinte para o evento `MessageSent`, que é acionado
-     * quando uma e-mail é enviado.
-     *
-     * @param  mixed  $app A instância do aplicativo que fornece o container de eventos.
-     * @return void
-     */
     public function register($app): void
     {
         $app['events']->listen(MessageSent::class, [$this, 'recordMail']);
@@ -27,26 +17,32 @@ class MailWatcher extends Watcher
 
     public function recordMail(MessageSent $event): void
     {
-
         try {
+            if (! Monitoring::isEnabled()) return;
 
-            if(!Monitoring::isEnabled()) return;
+            $html = $event->message->getBody() instanceof AbstractPart
+                ? ($event->message->getHtmlBody() ?? $event->message->getTextBody())
+                : $event->message->getBody();
+
+            // Trunca o body do e-mail para no máximo 10KB
+            if (is_string($html) && strlen($html) > 10240) {
+                $html = substr($html, 0, 10240) . '... [truncated]';
+            }
 
             $entry = IncomingEntry::make([
                 'mailable' => $this->getMailable($event),
-                'queued' => $this->getQueuedStatus($event),
-                'from' => $this->formatAddresses($event->message->getFrom()),
-                'replyTo' => $this->formatAddresses($event->message->getReplyTo()),
-                'to' => $this->formatAddresses($event->message->getTo()),
-                'cc' => $this->formatAddresses($event->message->getCc()),
-                'bcc' => $this->formatAddresses($event->message->getBcc()),
-                'subject' => $event->message->getSubject(),
-                'html' => $event->message->getBody() instanceof AbstractPart ? ($event->message->getHtmlBody() ?? $event->message->getTextBody()) : $event->message->getBody(),
-                'raw' => $event->message->toString(),
+                'queued'   => $this->getQueuedStatus($event),
+                'from'     => $this->formatAddresses($event->message->getFrom()),
+                'replyTo'  => $this->formatAddresses($event->message->getReplyTo()),
+                'to'       => $this->formatAddresses($event->message->getTo()),
+                'cc'       => $this->formatAddresses($event->message->getCc()),
+                'bcc'      => $this->formatAddresses($event->message->getBcc()),
+                'subject'  => $event->message->getSubject(),
+                'html'     => $html,
+                // 'raw' removido — pode ser muito grande e duplica o html
             ]);
 
             Monitoring::recordMail($entry);
-
         } catch (\Exception $exception) {
             loggly()->to('file')->performedOn(self::class)->exception($exception)->level('error')->log($exception->getMessage());
         }
@@ -54,20 +50,12 @@ class MailWatcher extends Watcher
 
     protected function getMailable($event): mixed
     {
-        if (isset($event->data['__laravel_notification'])) {
-            return $event->data['__laravel_notification'];
-        }
-
-        return '';
+        return $event->data['__laravel_notification'] ?? '';
     }
 
     protected function getQueuedStatus($event): mixed
     {
-        if (isset($event->data['__laravel_notification_queued'])) {
-            return $event->data['__laravel_notification_queued'];
-        }
-
-        return false;
+        return $event->data['__laravel_notification_queued'] ?? false;
     }
 
     protected function formatAddresses(?array $addresses): ?array
@@ -80,7 +68,6 @@ class MailWatcher extends Watcher
             if ($address instanceof Address) {
                 return [$address->getAddress() => $address->getName()];
             }
-
             return [$key => $address];
         })->all();
     }

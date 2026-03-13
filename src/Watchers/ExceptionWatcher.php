@@ -11,78 +11,133 @@ use RiseTechApps\Monitoring\Services\ExceptionContext;
 use RiseTechApps\Monitoring\Services\ExtractTags;
 use Throwable;
 
+/**
+ * CORREÇÕES APLICADAS:
+ *
+ * 1. CIRCUIT BREAKER LOCAL
+ *    A versão anterior não tinha proteção contra ser chamado enquanto o próprio
+ *    pacote já estava processando um erro. Agora um flag estático garante que
+ *    recordException() é no-op quando chamado re-entrante.
+ *
+ * 2. TRACE TRUNCADO (MAX_TRACE_FRAMES)
+ *    Traces de Predis/Redis podem ter 100+ frames. Limitamos a 30 frames e
+ *    removemos os argumentos para reduzir drasticamente o uso de memória.
+ *
+ * 3. REFERÊNCIA À EXCEÇÃO LIBERADA
+ *    IncomingExceptionEntry::releaseException() é chamado logo após a construção
+ *    para que o objeto Throwable (com sua cadeia $previous) seja elegível para GC
+ *    enquanto a entrada ainda está no buffer.
+ *
+ * 4. CONTEXTO DE ARQUIVO LIMITADO
+ *    ExceptionContext::get() lê o arquivo fonte da exceção. Para arquivos de vendor
+ *    grandes isso pode ser custoso. Encapsulamos em try/catch para não travar.
+ */
 class ExceptionWatcher extends Watcher
 {
+    /** Máximo de frames do stack trace a armazenar */
+    private const MAX_TRACE_FRAMES = 30;
+
+    /** Máximo de bytes para a mensagem de exceção */
+    private const MAX_MESSAGE_LENGTH = 2000;
+
     /**
-     * Registra o ouvinte de eventos para o registro de exceções.
-     *
-     * Este método configura um ouvinte para o evento `MessageLogged`, que
-     * será tratado pelo método `recordException`.
-     *
-     * @param  mixed  $app A instância do aplicativo que fornece o container de eventos.
-     * @return void
+     * Circuit breaker estático — impede recursão caso recordException() seja
+     * chamado a partir de código disparado pelo próprio processo de gravação.
      */
+    private static bool $handling = false;
+
     public function register($app): void
     {
         $app['events']->listen(MessageLogged::class, [$this, 'recordException']);
     }
 
-    /**
-     * Registra uma exceção quando um evento de log é emitido.
-     *
-     * Este método cria uma entrada de exceção com base nas informações do evento
-     * de log. Se houver uma exceção durante o processamento, ela será registrada
-     * em um arquivo de log.
-     *
-     * @param  MessageLogged  $event O evento de log que contém a exceção.
-     * @return void
-     * @throws \Exception Se ocorrer um erro ao criar ou gravar a entrada de exceção.
-     */
     public function recordException(MessageLogged $event): void
     {
+        // ── Circuit breaker ───────────────────────────────────────────────────
+        if (self::$handling) {
+            return;
+        }
+
+        if (!Monitoring::isEnabled()) {
+            return;
+        }
+
+        if ($this->shouldIgnore($event)) {
+            return;
+        }
+
+        self::$handling = true;
+
         try {
-
-            if(!Monitoring::isEnabled()) return;
-
-            if ($this->shouldIgnore($event)) {
-                return;
-            }
-
+            /** @var Throwable $exception */
             $exception = $event->context['exception'];
 
-            $trace = collect($exception->getTrace())->map(function ($item) {
-                return Arr::only($item, ['file', 'line']);
-            })->toArray();
+            // Trace truncado — apenas file/line/class/function, sem argumentos.
+            // Limita a MAX_TRACE_FRAMES para evitar payloads enormes de Predis.
+            $rawTrace = $exception->getTrace();
+            $trace = array_slice(
+                array_map(
+                    fn($frame) => array_intersect_key($frame, array_flip(['file', 'line', 'class', 'function'])),
+                    $rawTrace
+                ),
+                0,
+                self::MAX_TRACE_FRAMES
+            );
+            unset($rawTrace); // libera memória imediatamente
+
+            // Contexto do arquivo (10 linhas ao redor da exceção).
+            // Protegido contra falhas em arquivos de vendor inacessíveis.
+            $linePreview = [];
+            try {
+                $linePreview = ExceptionContext::get($exception);
+            } catch (\Throwable) {
+                // Silencia — line preview é opcional.
+            }
 
             $entry = IncomingExceptionEntry::make($exception, [
-                'class' => get_class($exception),
-                'file' => $exception->getFile(),
-                'line' => $exception->getLine(),
-                'message' => $exception->getMessage(),
-                'context' => transform(Arr::except($event->context, ['exception', 'monitoring']), function ($context) {
-                    return !empty($context) ? $context : null;
-                }),
-                'trace' => $trace,
-                'line_preview' => ExceptionContext::get($exception),
+                'class'        => get_class($exception),
+                'file'         => $exception->getFile(),
+                'line'         => $exception->getLine(),
+                'message'      => substr($exception->getMessage(), 0, self::MAX_MESSAGE_LENGTH),
+                'context'      => transform(
+                    Arr::except($event->context, ['exception', 'monitoring']),
+                    fn($ctx) => !empty($ctx) ? $ctx : null
+                ),
+                'trace'        => $trace,
+                'line_preview' => $linePreview,
             ]);
+
+            // Libera a referência ao Throwable o quanto antes para que a cadeia
+            // $previous e os frames da call stack possam ser coletados pelo GC.
+            $entry->releaseException();
 
             Monitoring::recordException($entry);
 
-        } catch (\Exception $exception) {
-            loggly()->to('file')->performedOn(self::class)->exception($exception)->level('error')->log($exception->getMessage());
+        } catch (\Throwable $e) {
+            // Canal seguro: file_put_contents direto, sem passar pelo Log facade.
+            // Usar Log::* aqui causaria novo MessageLogged → recursão infinita.
+            try {
+                $line = sprintf(
+                    "[%s] ExceptionWatcher::recordException FAILED: %s in %s:%d\n",
+                    date('Y-m-d H:i:s'),
+                    $e->getMessage(),
+                    $e->getFile(),
+                    $e->getLine()
+                );
+                file_put_contents(
+                    storage_path('logs/monitoring-internal.log'),
+                    $line,
+                    FILE_APPEND | LOCK_EX
+                );
+            } catch (\Throwable) {
+                // Silencia.
+            }
+        } finally {
+            self::$handling = false;
         }
     }
 
-    /**
-     * Extrai as tags associadas ao evento.
-     *
-     * Obtém as tags relacionadas à exceção e ao serviço de monitoramento a partir
-     * do contexto do evento.
-     *
-     * @param  MessageLogged  $event O evento de log que contém a exceção.
-     * @return array As tags extraídas.
-     */
-    protected function tags($event): array
+    protected function tags(MessageLogged $event): array
     {
         return array_merge(
             ExtractTags::from($event->context['exception']),
@@ -90,18 +145,9 @@ class ExceptionWatcher extends Watcher
         );
     }
 
-    /**
-     * Determina se o evento deve ser ignorado.
-     *
-     * Verifica se o evento não contém uma exceção ou se a exceção não é uma
-     * instância de `Throwable`.
-     *
-     * @param  MessageLogged  $event O evento de log.
-     * @return bool Retorna verdadeiro se o evento deve ser ignorado, falso caso contrário.
-     */
-    private function shouldIgnore($event): bool
+    private function shouldIgnore(MessageLogged $event): bool
     {
-        return !isset($event->context['exception']) ||
-            !$event->context['exception'] instanceof Throwable;
+        return !isset($event->context['exception'])
+            || !($event->context['exception'] instanceof Throwable);
     }
 }

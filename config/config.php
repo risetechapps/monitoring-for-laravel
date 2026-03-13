@@ -23,14 +23,14 @@ return [
                     'telescope',
                     'telescope-api',
                 ],
+                'size_limit' => (int) env('MONITORING_RESPONSE_SIZE_LIMIT_KB', 32),
             ],
         ],
         \RiseTechApps\Monitoring\Watchers\EventWatcher::class => [
             'enabled' => true,
             'options' => [
                 'ignore' => [
-                    \RiseTechApps\Monitoring\Watchers\RequestWatcher::class,
-                    \RiseTechApps\Monitoring\Watchers\EventWatcher::class,
+
                 ],
             ],
         ],
@@ -46,17 +46,16 @@ return [
     ],
 
     'drivers' => [
-
-//        'db_connection' => env('DB_CONNECTION'),
-
-        'mysql' => [
-            'connection' => env('DB_CONNECTION', 'mysql'),
-        ],
-        'pgsql' => [
+        'database' => [
             'connection' => env('DB_CONNECTION', 'pgsql'),
         ],
         'http' => [
-            'token' => env('MONITORING_HTTP_TOKEN', ''),
+            'token'   => env('MONITORING_HTTP_TOKEN', ''),
+            'timeout' => (int) env('MONITORING_HTTP_TIMEOUT', 5),
+            'retry'   => [
+                'times' => (int) env('MONITORING_HTTP_RETRY_TIMES', 0),
+                'sleep' => (int) env('MONITORING_HTTP_RETRY_SLEEP', 0),
+            ],
         ],
 
         'single' => [

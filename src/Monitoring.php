@@ -8,8 +8,6 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Traits\Record\Record;
@@ -18,76 +16,42 @@ use Throwable;
 /**
  * Class Monitoring
  *
- * A classe principal para monitoramento de eventos e logs.
- * Gerencia o registro de logs, utiliza buffering para otimizar o desempenho e grava os logs no banco de dados.
+ * Classe principal. Gerencia buffer de entradas e despacha para o repositório.
  *
- * @package RiseTechApps\Monitoring
+ * IMPORTANTE: esta classe NUNCA deve chamar Log::*, loggly() ou qualquer outro
+ * canal que dispare eventos Laravel (MessageLogged, etc.), pois isso causa
+ * recursão infinita → OOM via Predis/Redis.
+ * Erros internos são escritos diretamente em arquivo com file_put_contents().
  */
 class Monitoring
 {
     use Record;
 
-    /**
-     * Lista de watchers que serão registrados para monitoramento.
-     * @var array
-     */
     protected static array $watchers = [];
-
-    /**
-     * Lista de callbacks para tags que serão aplicadas a cada entrada.
-     * @var array
-     */
     protected static array $tagUsing = [];
 
-    /**
-     * Lista de parametros para serem ocultados dos response.
-     * @var array
-     */
     public static array $hiddenResponseParameters = [];
-
-    /**
-     * Lista de parametros para serem ocultados dos headers.
-     * @var array
-     */
     public static array $hiddenRequestParameters = [];
 
-    /**
-     * Buffer para armazenar temporariamente as entradas de log antes de gravá-las no banco de dados.
-     * @var array
-     */
     protected static array $buffer = [];
-
-    /**
-     * Tamanho do buffer. Quando o buffer atinge este tamanho, os dados são gravados no banco de dados.
-     * @var int
-     */
     protected static int $bufferSize = 10;
-
-    /**
-     * Interface para o repositório de armazenamento de logs.
-     * @var MonitoringRepositoryInterface
-     */
     protected static MonitoringRepositoryInterface $repository;
 
-    /** Status do monitor se está ativo ou não
-     * @var false
-     */
     private static bool $enabled = false;
 
     /**
-     * Monitoring constructor.
-     *
-     * @param MonitoringRepositoryInterface $repository Interface para o repositório de armazenamento de logs.
+     * CIRCUIT BREAKER — impede que o próprio pacote dispare novos registros
+     * enquanto já está processando uma entrada. Sem isso, qualquer erro interno
+     * que chame Log::* dispara MessageLogged → ExceptionWatcher → record() → loop.
      */
+    private static bool $isRecording = false;
+
     public function __construct(MonitoringRepositoryInterface $repository)
     {
         self::$repository = $repository;
-        self::$enabled = true;
+        self::$enabled    = true;
     }
 
-    /**
-     * Desabilita o Monitoring
-     */
     public static function disable(): void
     {
         static::$enabled = false;
@@ -98,18 +62,14 @@ class Monitoring
         return static::$enabled;
     }
 
-
     /**
      * Inicializa o sistema de monitoramento e registra os watchers.
-     *
-     * @param $app Application Laravel, utilizada para resolução de dependências.
      *
      * @throws BindingResolutionException
      */
     public static function start(Application $app): void
     {
-
-        static::$enabled = (bool)config('monitoring.enabled');
+        static::$enabled = (bool) config('monitoring.enabled');
 
         $repository = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
@@ -120,10 +80,7 @@ class Monitoring
         static::$watchers = [];
 
         foreach (static::configuredWatchers() as $watcherClass => $options) {
-            $watcher = $app->make($watcherClass, [
-                'options' => $options,
-            ]);
-
+            $watcher = $app->make($watcherClass, ['options' => $options]);
             static::$watchers[] = get_class($watcher);
             $watcher->register($app);
         }
@@ -131,7 +88,7 @@ class Monitoring
 
     protected static function configuredWatchers(): array
     {
-        $defaults = static::normalizeWatcherConfiguration(static::defaultWatchers());
+        $defaults  = static::normalizeWatcherConfiguration(static::defaultWatchers());
         $configured = config('monitoring.watchers');
 
         $custom = is_array($configured)
@@ -151,12 +108,10 @@ class Monitoring
         }
 
         $active = [];
-
         foreach ($defaults as $class => $config) {
             if (!($config['enabled'] ?? true)) {
                 continue;
             }
-
             $active[$class] = $config['options'] ?? [];
         }
 
@@ -166,36 +121,40 @@ class Monitoring
     protected static function defaultWatchers(): array
     {
         return [
-            Watchers\RequestWatcher::class => [
+            Watchers\RequestWatcher::class   => [
                 'enabled' => true,
                 'options' => [
-                    'ignore_http_methods' => [
-                        'options',
-                    ],
+                    'ignore_http_methods' => ['options'],
                     'ignore_status_codes' => [],
-                    'ignore_paths' => [
+                    'ignore_paths'        => [
                         'telescope',
                         'telescope-api',
+                        'horizon',
+                        'horizon/api/*',
+                        '_debugbar',
+                        'livewire/update',
                     ],
                 ],
             ],
-            Watchers\EventWatcher::class => [
+            Watchers\EventWatcher::class     => [
                 'enabled' => true,
                 'options' => [
                     'ignore' => [
                         Watchers\RequestWatcher::class,
                         Watchers\EventWatcher::class,
+                        'Laravel\Horizon\Events\*',
+                        'Laravel\Telescope\Events\*',
                     ],
                 ],
             ],
-            Watchers\ExceptionWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\CommandWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\GateWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\JobWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\QueueWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\ScheduleWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\ExceptionWatcher::class    => ['enabled' => true, 'options' => []],
+            Watchers\CommandWatcher::class      => ['enabled' => true, 'options' => []],
+            Watchers\GateWatcher::class         => ['enabled' => true, 'options' => []],
+            Watchers\JobWatcher::class          => ['enabled' => true, 'options' => []],
+            Watchers\QueueWatcher::class        => ['enabled' => true, 'options' => []],
+            Watchers\ScheduleWatcher::class     => ['enabled' => true, 'options' => []],
             Watchers\NotificationWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\MailWatcher::class => ['enabled' => true, 'options' => []],
+            Watchers\MailWatcher::class         => ['enabled' => true, 'options' => []],
         ];
     }
 
@@ -205,18 +164,12 @@ class Monitoring
 
         foreach ($watchers as $key => $value) {
             if (is_int($key)) {
-                $normalized[$value] = [
-                    'enabled' => true,
-                    'options' => [],
-                ];
+                $normalized[$value] = ['enabled' => true, 'options' => []];
                 continue;
             }
 
             if (is_bool($value)) {
-                $normalized[$key] = [
-                    'enabled' => $value,
-                    'options' => [],
-                ];
+                $normalized[$key] = ['enabled' => $value, 'options' => []];
                 continue;
             }
 
@@ -242,14 +195,22 @@ class Monitoring
     }
 
     /**
-     * Registra uma entrada de log e gerencia o buffer.
+     * Registra uma entrada no buffer.
      *
-     * @param string $type Tipo de log (ex: 'info', 'error').
-     * @param IncomingEntry $entry Entrada de log a ser registrada.
-     * @throws \Exception Em caso de falha ao gravar a entrada.
+     * O circuit breaker ($isRecording) garante que erros internos do pacote
+     * não disparem novos registros → previne o loop infinito que causava OOM.
      */
     protected static function record(string $type, IncomingEntry $entry): void
     {
+        // ── CIRCUIT BREAKER ──────────────────────────────────────────────────
+        // Se já estamos dentro do record(), ignoramos silenciosamente.
+        // Isso impede que Log::* chamado em um catch interno cause recursão.
+        if (self::$isRecording) {
+            return;
+        }
+
+        self::$isRecording = true;
+
         try {
             static::isAuth($entry);
             static::isTags($entry, $type);
@@ -258,20 +219,20 @@ class Monitoring
 
             if (count(self::$buffer) >= self::$bufferSize) {
                 static::flushBuffer();
-            } else if (App::runningInConsole()) {
+            } elseif (App::runningInConsole()) {
                 static::flushBuffer();
             }
-        } catch (\Exception $exception) {
-            Log::error('Failed to buffer monitoring entry', [
-                'type' => $type,
-                'exception' => $exception,
-                'entry' => method_exists($entry, 'toArray') ? $entry->toArray() : null,
-            ]);
+        } catch (\Throwable $e) {
+            // NUNCA usa Log::* aqui — causaria recursão via MessageLogged.
+            // Usa file_put_contents() direto para garantir saída segura.
+            static::writeInternalError('record', $type, $e);
+        } finally {
+            self::$isRecording = false;
         }
     }
 
     /**
-     * Esvazia o buffer e grava as entradas no banco de dados.
+     * Esvazia o buffer e envia as entradas ao repositório.
      */
     protected static function flushBuffer(): void
     {
@@ -279,46 +240,63 @@ class Monitoring
             return;
         }
 
-        try {
-                $dataEntry = [];
-                foreach (self::$buffer as $entry) {
-                    $dataEntry[] = $entry->toArray();
-                }
-                self::$repository->create($dataEntry);
-                self::$buffer = [];
+        // Captura o buffer atual e limpa ANTES do envio para liberar memória.
+        $entries = self::$buffer;
+        self::$buffer = [];
 
-        } catch (\Exception $e) {
-            Log::critical('Failed to persist monitoring entries', [
-                'exception' => $e,
-                'entries' => array_map(function ($entry) {
-                    return method_exists($entry, 'toArray') ? $entry->toArray() : $entry;
-                }, self::$buffer),
-            ]);
+        try {
+            $dataEntry = [];
+            foreach ($entries as $entry) {
+                $dataEntry[] = $entry->toArray();
+            }
+
+            self::$repository->create($dataEntry);
+        } catch (\Throwable $e) {
+            // NUNCA usa Log::* aqui — causaria recursão via MessageLogged.
+            static::writeInternalError('flushBuffer', 'batch', $e);
+        } finally {
+            // Força liberação do array (referências PHP)
+            unset($entries);
         }
     }
 
     /**
-     * Adiciona informações de autenticação à entrada de log.
-     *
-     * @param IncomingEntry $entry Entrada de log a ser modificada.
+     * Escreve erros internos diretamente em arquivo, sem passar pelo Laravel Log.
+     * Isso é o único canal seguro para diagnosticar falhas dentro do pacote.
      */
+    private static function writeInternalError(string $context, string $type, \Throwable $e): void
+    {
+        try {
+            $line = sprintf(
+                "[%s] monitoring.INTERNAL_ERROR context=%s type=%s error=%s file=%s:%d\n",
+                date('Y-m-d H:i:s'),
+                $context,
+                $type,
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine()
+            );
+            file_put_contents(
+                storage_path('logs/monitoring-internal.log'),
+                $line,
+                FILE_APPEND | LOCK_EX
+            );
+        } catch (\Throwable) {
+            // Silencia — não há canal mais seguro disponível.
+        }
+    }
+
     protected static function isAuth(IncomingEntry $entry): void
     {
         try {
             if (Auth::hasResolvedGuards() && Auth::hasUser()) {
                 $entry->user(Auth::user());
             }
-        } catch (Throwable $e) {
-            // Registra exceção em caso de falha ao adicionar informações de autenticação.
+        } catch (Throwable) {
+            // Silencia — falhas de auth não devem parar o monitoramento.
         }
     }
 
-    /**
-     * Aplica tags à entrada de log com base no tipo.
-     *
-     * @param IncomingEntry $entry Entrada de log a ser modificada.
-     * @param string $type Tipo de log.
-     */
     protected static function isTags(IncomingEntry $entry, string $type): void
     {
         $entry->type($type)->tags(Arr::collapse(array_map(function ($tagCallback) use ($entry) {
@@ -326,30 +304,19 @@ class Monitoring
         }, static::$tagUsing)));
     }
 
-    /**
-     * Adiciona um callback de tag para ser aplicado a cada entrada de log.
-     *
-     * @param Closure $callback Função de callback para gerar tags.
-     * @return static
-     */
     public static function tag(Closure $callback): static
     {
         static::$tagUsing[] = $callback;
         return new static(self::$repository);
     }
 
-    /**
-     * Garante que o buffer seja esvaziado quando a aplicação é finalizada.
-     */
     public static function flushAll(): void
     {
         if (!empty(self::$buffer)) {
             self::flushBuffer();
         }
     }
-    /**
-     * Registra as rotas do package.
-     */
+
     public static function routes($options = []): void
     {
         Routes::register($options);
