@@ -11,8 +11,6 @@ use Monolog\Logger;
 use RiseTechApps\Monitoring\Http\Middleware\DisableMonitoringMiddleware;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositoryDatabase;
-use RiseTechApps\Monitoring\Repository\MonitoringRepositoryHttp;
-use RiseTechApps\Monitoring\Repository\MonitoringRepositoryPgsql;
 use RiseTechApps\Monitoring\Repository\MonitoringRepositorySingle;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 use RiseTechApps\RiseTools\Features\Device\Device;
@@ -105,7 +103,6 @@ class MonitoringServiceProvider extends ServiceProvider
 
             return match ($driver) {
                 'database'  => new MonitoringRepositoryDatabase($driversConfig['database']['connection']),
-                'http'   => new MonitoringRepositoryHttp($driversConfig['http'] ?? []),
                 'single' => new MonitoringRepositorySingle(),
                 default  => throw new \Exception("Driver {$driver} não é suportado."),
             };

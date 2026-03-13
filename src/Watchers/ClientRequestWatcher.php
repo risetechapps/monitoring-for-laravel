@@ -10,7 +10,6 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Monitoring;
-use RiseTechApps\Monitoring\Repository\MonitoringRepositoryHttp;
 use RiseTechApps\Monitoring\Traits\FormatsClosure\FormatsClosure;
 use Symfony\Component\HttpFoundation\File\File;
 
@@ -79,12 +78,6 @@ class ClientRequestWatcher extends Watcher
     protected function shouldIgnoreHost($event): bool
     {
         $host = $event->request->toPsrRequest()->getUri()->getHost();
-
-        $repositoryHost = parse_url(MonitoringRepositoryHttp::$HOST, PHP_URL_HOST);
-        $repositoryHostApi = parse_url(MonitoringRepositoryHttp::$HOST_API, PHP_URL_HOST);
-
-
-        if ($host === $repositoryHost || $host === $repositoryHostApi) return true;
 
         return in_array($host, Arr::get($this->options, 'ignore_hosts', []));
     }

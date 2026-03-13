@@ -7,7 +7,7 @@ return [
 
     'enabled' => env('MONITORING_ENABLED', true),
 
-    'driver' => env('MONITORING_DRIVER', 'single'),
+    'driver' => env('MONITORING_DRIVER', 'database'),
 
     'buffer_size' => (int)env('MONITORING_BUFFER_SIZE', 5),
 
@@ -48,14 +48,6 @@ return [
     'drivers' => [
         'database' => [
             'connection' => env('DB_CONNECTION', 'pgsql'),
-        ],
-        'http' => [
-            'token'   => env('MONITORING_HTTP_TOKEN', ''),
-            'timeout' => (int) env('MONITORING_HTTP_TIMEOUT', 5),
-            'retry'   => [
-                'times' => (int) env('MONITORING_HTTP_RETRY_TIMES', 0),
-                'sleep' => (int) env('MONITORING_HTTP_RETRY_SLEEP', 0),
-            ],
         ],
 
         'single' => [
