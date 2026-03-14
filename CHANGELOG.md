@@ -4,7 +4,9 @@ Todas as mudanças notáveis deste projeto estão documentadas neste arquivo.
 O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/).
 
 ---
-
+## [2.0.1] — 2025-03-15
+- Implementado setType em IncomingEntry
+- 
 ## [2.0.0] — 2025-03-14
 
 ### ✨ Adicionado
