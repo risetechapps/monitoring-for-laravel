@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RiseTechApps\Monitoring\Repository;
 
 use Illuminate\Support\Collection;
@@ -7,9 +9,12 @@ use Illuminate\Support\Facades\Log;
 use RiseTechApps\Monitoring\Entry\EntryType;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 
+/**
+ * Driver de repositório baseado em arquivo de log (single).
+ * Utilizado quando MONITORING_DRIVER=single.
+ */
 class MonitoringRepositorySingle implements MonitoringRepositoryInterface
 {
-
     public function create(array $data): void
     {
         foreach ($data as $monitoring) {
@@ -32,9 +37,14 @@ class MonitoringRepositorySingle implements MonitoringRepositoryInterface
         return collect();
     }
 
-    public function getEventsByTags(): Collection
+    public function getEventsByTags(array $tags = []): Collection
     {
         return collect(EntryType::getTypes());
+    }
+
+    public function getEventsByUserId(string $userId): Collection
+    {
+        return collect();
     }
 
     public function getByBatch(string $id): Collection
@@ -51,6 +61,7 @@ class MonitoringRepositorySingle implements MonitoringRepositoryInterface
     {
         return collect();
     }
+
     public function getLast15Days(): Collection
     {
         return collect();

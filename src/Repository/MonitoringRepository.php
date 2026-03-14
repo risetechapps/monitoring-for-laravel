@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RiseTechApps\Monitoring\Repository;
 
 use Illuminate\Support\Carbon;
@@ -8,39 +10,40 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Entry\EntryType;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
+use RiseTechApps\Monitoring\Services\MonitoringQueryService;
 
+/**
+ * Repositório base de monitoramento.
+ *
+ * A lógica de queries foi extraída para MonitoringQueryService (v2.0).
+ * Este repositório é responsável apenas pela formatação e orquestração
+ * dos dados retornados ao controlador.
+ */
 class MonitoringRepository implements MonitoringRepositoryInterface
 {
     protected string $table = 'monitoring';
-    protected mixed $connection;
+    protected string $connection;
+    protected MonitoringQueryService $queryService;
 
-    /**
-     * Campos que devem ser convertidos em JSON ao salvar e decodificados no retorno.
-     */
-    protected array $jsonColumns = [
-        'content',
-        'tags',
-        'user',
-        'device',
-    ];
+    protected array $jsonColumns = ['content', 'tags', 'user', 'device'];
 
-    public function __construct($connection = null)
+    public function __construct(string $connection = null)
     {
-        $this->connection = $connection ?? config('monitoring.drivers.db_connection');
+        $this->connection   = $connection ?? config('monitoring.drivers.database.connection', config('database.default'));
+        $this->queryService = new MonitoringQueryService($this->connection);
     }
 
-    /**
-     * Inserir múltiplos eventos no banco.
-     */
+    // ---------------------------------------------------------------
+    // Escrita
+    // ---------------------------------------------------------------
+
     public function create(array $data): void
     {
-        // adiciona uuid para cada entrada
-        $data = array_map(function ($entry) {
+        $data = array_map(function (array $entry): array {
             $entry['id'] = self::generateUuid();
             return $entry;
         }, $data);
 
-        // converte apenas os campos que realmente são JSON
         $data = $this->encodeJsonColumns($data);
 
         DB::connection($this->connection)
@@ -48,60 +51,40 @@ class MonitoringRepository implements MonitoringRepositoryInterface
             ->insert($data);
     }
 
-    /**
-     * Retorna todos os eventos (ordenados por mais recente)
-     */
+    // ---------------------------------------------------------------
+    // Leitura
+    // ---------------------------------------------------------------
+
     public function getAllEvents(): Collection
     {
-        return DB::connection($this->connection)
-            ->table($this->table)
-            ->orderBy('created_at', 'DESC')
-            ->get()
-            ->map(fn($event) => $this->formatEvent($event));
+        return $this->queryService->getAll()
+            ->map(fn ($event) => $this->formatEvent($event));
     }
 
-    /**
-     * Retorna um evento pelo ID e todos os eventos relacionados ao mesmo batch.
-     */
     public function getEventById(string $id): Collection
     {
-        $event = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('uuid', $id)
-            ->orWhere('id', $id)
-            ->first();
+        $event = $this->queryService->findById($id);
 
         if (!$event) {
             return collect();
         }
 
-        $related = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('batch_id', $event->batch_id)
-            ->orderBy('created_at', 'DESC')
-            ->get()
-            ->reject(fn($row) => $row->id === $event->id)
+        $related = $this->queryService->getByBatchId($event->batch_id)
+            ->reject(fn ($row) => $row->id === $event->id)
             ->values();
 
         return collect($this->formatEvent($event, $related));
     }
 
-    /**
-     * Busca eventos por tipo e retorna também relacionados por batch.
-     */
     public function getEventsByTypes(string $type): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('type', $type)
-            ->orderBy('created_at', 'DESC')
-            ->get();
+        $events = $this->queryService->getByType($type);
 
         if ($events->isEmpty()) {
             return collect();
         }
 
-        $batchIds = $events->pluck('batch_id')->unique()->values();
+        $batchIds = $events->pluck('batch_id')->unique()->values()->toArray();
 
         $related = DB::connection($this->connection)
             ->table($this->table)
@@ -110,9 +93,9 @@ class MonitoringRepository implements MonitoringRepositoryInterface
             ->get()
             ->groupBy('batch_id');
 
-        return $events->map(function ($event) use ($related) {
+        return $events->map(function (object $event) use ($related): array {
             $relatedEvents = $related->get($event->batch_id, collect())
-                ->reject(fn($row) => $row->id === $event->id)
+                ->reject(fn ($row) => $row->id === $event->id)
                 ->values();
 
             return $this->formatEvent($event, $relatedEvents);
@@ -120,154 +103,101 @@ class MonitoringRepository implements MonitoringRepositoryInterface
     }
 
     /**
-     * Busca eventos por tags JSON.
-     * Exemplo de entrada:
-     * ["action" => "index"]
+     * Busca por tags JSON com rastreabilidade recursiva por batch_id.
+     *
+     * @param  array<string, string>  $tags  ex.: ['user_id' => 'uuid-aqui']
      */
-    public function getEventsByTags(): Collection
+    public function getEventsByTags(array $tags = []): Collection
     {
-        return collect(EntryType::getTypes());
+        if (empty($tags)) {
+            return collect(EntryType::getTypes());
+        }
+
+        $rows = $this->queryService->getByTagsWithBatchExpansion($tags);
+
+        return $rows->map(fn ($event) => $this->formatEvent($event));
+    }
+
+    /**
+     * Busca logs por user_id nas tags com expansão completa de batch.
+     */
+    public function getEventsByUserId(string $userId): Collection
+    {
+        return $this->queryService->getByUserId($userId)
+            ->map(fn ($event) => $this->formatEvent($event));
     }
 
     public function getByBatch(string $id): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('batch_id', $id)
-            ->orderBy('created_at', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getByBatchId($id);
     }
 
     public function getLast24Hours(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subHours(24))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(1);
     }
 
     public function getLast7Days(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subDays(7))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(7);
     }
 
     public function getLast15Days(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subDays(15))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(15);
     }
 
     public function getLast30Days(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subDays(30))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(30);
     }
 
     public function getLast60Days(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subDays(60))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(60);
     }
 
     public function getLast90Days(): Collection
     {
-        $events = DB::connection($this->connection)
-            ->table($this->table)
-            ->where('request_timestamp', '>=', Carbon::now()->subDays(90))
-            ->orderBy('request_timestamp', 'DESC')
-            ->get();
-
-        if ($events->isEmpty()) {
-            return collect();
-        }
-
-        return collect($events);
+        return $this->queryService->getRecentDays(90);
     }
 
-    /**
-     * Formata evento antes de retornar ao front.
-     */
+    // ---------------------------------------------------------------
+    // Formatação
+    // ---------------------------------------------------------------
+
     protected function formatEvent(object $event, Collection $related = null): array
     {
-        $related = $related ?: collect();
+        $related = $related ?? collect();
 
         return [
-            'id' => $event->id,
-            'uuid' => $event->uuid,
-            'batch_id' => $event->batch_id,
-            'type' => $event->type,
-            'content' => $this->decodeIfJson($event->content),
-            'tags' => $this->decodeIfJson($event->tags),
-            'user' => $this->decodeIfJson($event->user ?? null),
-            'device' => $this->decodeIfJson($event->device ?? null),
-            'created_at' => $event->created_at,
-            'updated_at' => $event->updated_at,
-            'related_events' => $related->map(fn($r) => [
-                'id' => $r->id,
-                'uuid' => $r->uuid,
-                'batch_id' => $r->batch_id,
-                'type' => $r->type,
-                'content' => $this->decodeIfJson($r->content),
-                'tags' => $this->decodeIfJson($r->tags),
+            'id'             => $event->id,
+            'uuid'           => $event->uuid,
+            'batch_id'       => $event->batch_id,
+            'type'           => $event->type,
+            'content'        => $this->decodeIfJson($event->content),
+            'tags'           => $this->decodeIfJson($event->tags),
+            'user'           => $this->decodeIfJson($event->user ?? null),
+            'device'         => $this->decodeIfJson($event->device ?? null),
+            'created_at'     => $event->created_at,
+            'updated_at'     => $event->updated_at,
+            'related_events' => $related->map(fn ($r) => [
+                'id'         => $r->id,
+                'uuid'       => $r->uuid,
+                'batch_id'   => $r->batch_id,
+                'type'       => $r->type,
+                'content'    => $this->decodeIfJson($r->content),
+                'tags'       => $this->decodeIfJson($r->tags),
                 'created_at' => $r->created_at,
                 'updated_at' => $r->updated_at,
-            ]),
+            ])->values(),
         ];
     }
 
-    /**
-     * Codifica apenas colunas JSON para json_encode().
-     */
+    // ---------------------------------------------------------------
+    // Utilitários
+    // ---------------------------------------------------------------
+
     protected function encodeJsonColumns(array $data): array
     {
         foreach ($data as $i => $row) {
@@ -277,40 +207,41 @@ class MonitoringRepository implements MonitoringRepositoryInterface
                 }
             }
         }
+
         return $data;
     }
 
-    /**
-     * Decodifica valores JSON se forem strings JSON válidas.
-     */
-    protected function decodeIfJson($value)
+    protected function decodeIfJson(mixed $value): mixed
     {
         if (is_string($value) && $this->isJson($value)) {
             return json_decode($value, true);
         }
+
         return $value;
     }
 
-    protected function isJson($value): bool
+    protected function isJson(mixed $value): bool
     {
+        if (!is_string($value)) {
+            return false;
+        }
+
         json_decode($value);
+
         return json_last_error() === JSON_ERROR_NONE;
     }
 
-    /**
-     * Gerar UUID v7 ou fallback.
-     */
     protected static function generateUuid(): string
     {
-        if (class_exists(\Symfony\Component\Uid\Uuid::class) &&
-            method_exists(\Symfony\Component\Uid\Uuid::class, 'v7')) {
+        if (class_exists(\Symfony\Component\Uid\Uuid::class)
+            && method_exists(\Symfony\Component\Uid\Uuid::class, 'v7')) {
             return \Symfony\Component\Uid\Uuid::v7()->toRfc4122();
         }
 
         if (method_exists(Str::class, 'orderedUuid')) {
-            return (string)Str::orderedUuid();
+            return (string) Str::orderedUuid();
         }
 
-        return (string)Str::uuid();
+        return (string) Str::uuid();
     }
 }

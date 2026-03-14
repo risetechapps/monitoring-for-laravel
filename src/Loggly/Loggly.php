@@ -1,34 +1,47 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RiseTechApps\Monitoring\Loggly;
 
 use DateTime;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use RiseTechApps\Monitoring\Entry\EntryType;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Monitoring;
 use Throwable;
 
 /**
- * CORREÇÕES APLICADAS:
+ * Fluent API para registrar logs customizados no Monitoring.
  *
- * 1. DOUBLE-SEND ELIMINADO
- *    A versão anterior chamava sendToOutput($entry) IMEDIATAMENTE após adicionar
- *    ao buffer, E também dentro de flushLogs() quando o buffer enchia.
- *    Resultado: cada entrada era enviada 2× (na 5ª entrada, o flush reenviava
- *    todas as 5 e depois a 5ª ainda era enviada mais uma vez).
- *    Fix: sendToOutput() é chamado APENAS dentro de flushLogs(). O log() só
- *    acumula no buffer e decide quando liberar.
+ * CORREÇÕES APLICADAS (v2.1):
  *
- * 2. TRACE DE EXCEÇÃO TRUNCADO
- *    A versão anterior armazenava $exception->getTrace() completo. Para aplicações
- *    com Predis, um trace pode ter 80-150 frames, cada um com args completos.
- *    Fix: trace limitado a MAX_TRACE_FRAMES (20) e getTrace() usa
- *    DEBUG_BACKTRACE_IGNORE_ARGS para não capturar argumentos dos frames.
+ * BUG #1 — CAUSA RAIZ (logs nunca gravados em HTTP):
+ *   A classe não era registrada como singleton no ServiceProvider.
+ *   app(Loggly::class) criava uma nova instância a cada chamada helper,
+ *   com $logBuffer sempre vazio. O flushLogs() nunca era acionado em
+ *   contexto HTTP (não-console). A instância era descartada pelo GC
+ *   levando todos os logs com ela.
+ *   FIX: MonitoringServiceProvider registra Loggly::class como singleton.
  *
- * 3. BUFFER FLUSH IMEDIATO NO CONSOLE
- *    Em jobs/commands o processo termina sem passar pelo terminating() hook.
- *    Fix: flush imediato quando runningInConsole().
+ * BUG #2 — bufferSize ignorava a config do package:
+ *   $bufferSize = 5 estava hardcoded. A opção monitoring.buffer_size
+ *   era lida pelo Monitoring mas ignorada pela Loggly.
+ *   FIX: removido o buffer interno inteiramente (ver Bug #3).
+ *
+ * BUG #3 — Double-buffering redundante:
+ *   Loggly bufferizava internamente e depois chamava Monitoring::recordLoggly(),
+ *   que adiciona ao buffer estático do Monitoring. Dois buffers em série
+ *   sem nenhum benefício — duplicava a complexidade e ocultava o Bug #1.
+ *   FIX: Loggly::log() chama sendToOutput() DIRETAMENTE, sem buffer próprio.
+ *   O Monitoring já gerencia o buffer com flushBuffer() + terminating() hook.
+ *
+ * BUG ANTERIOR (v2.0 — mantido corrigido):
+ *   Double-send: sendToOutput() era chamado imediatamente EM log() E novamente
+ *   dentro de flushLogs() quando o buffer enchia. Cada entrada era enviada 2×.
+ *   Já estava corrigido; mantida a correção com a nova arquitetura.
  */
 class Loggly
 {
@@ -52,22 +65,18 @@ class Loggly
     const MODEL     = 7;
     const DEBUG     = 8;
 
-    private string   $level       = 'info';
-    private array    $properties  = [];
-    private ?string  $performed   = null;
-    private ?string  $performedID = null;
-    private ?array   $exception   = null;
-    private array    $context     = [];
-    private array    $tags        = [];
-    private ?DateTime $timestamp  = null;
-    private ?array   $request     = null;
-    private ?array   $response    = null;
-    private string   $output      = 'loggly';
-    private bool     $encryptLogs = false;
-
-    /** Buffer de entradas aguardando envio */
-    private array $logBuffer  = [];
-    private int   $bufferSize = 5;
+    private string  $level       = 'info';
+    private array   $properties  = [];
+    private ?string $performed   = null;
+    private ?string $performedID = null;
+    private ?array  $exception   = null;
+    private array   $context     = [];
+    private array   $tags        = [];
+    private ?DateTime $timestamp = null;
+    private ?array  $request     = null;
+    private ?array  $response    = null;
+    private string  $output      = 'loggly';
+    private bool    $encryptLogs = false;
 
     // ─── Fluent API ──────────────────────────────────────────────────────────
 
@@ -105,11 +114,12 @@ class Loggly
     public function exception(Throwable|string $exception): static
     {
         if ($exception instanceof Throwable) {
-            // Usa getTrace() sem argumentos para reduzir o tamanho do payload.
-            // array_slice() limita o número de frames.
             $rawTrace = $exception->getTrace();
-            $trace = array_slice(
-                array_map(fn($frame) => array_intersect_key($frame, array_flip(['file', 'line', 'class', 'function'])), $rawTrace),
+            $trace    = array_slice(
+                array_map(
+                    fn ($frame) => array_intersect_key($frame, array_flip(['file', 'line', 'class', 'function'])),
+                    $rawTrace
+                ),
                 0,
                 self::MAX_TRACE_FRAMES
             );
@@ -182,10 +192,14 @@ class Loggly
     /**
      * Registra a mensagem de log.
      *
-     * CORREÇÃO: A versão anterior chamava sendToOutput() imediatamente E também
-     * dentro de flushLogs(), enviando cada entry pelo menos 2×.
-     * Agora o entry é apenas adicionado ao buffer; o envio real ocorre SOMENTE
-     * dentro de flushLogs() / flushImmediately().
+     * CORREÇÃO v2.1: O buffer interno foi removido. Loggly delega
+     * imediatamente para sendToOutput(), que encaminha ao Monitoring.
+     * O Monitoring já possui buffer estático próprio (flushBuffer) e
+     * é descarregado no hook terminating() — nenhum log se perde.
+     *
+     * A classe deve ser singleton (registrada no ServiceProvider) para
+     * que o resetState() ao final deste método preserve o isolamento
+     * correto entre chamadas encadeadas.
      */
     public function log(string $message): void
     {
@@ -200,77 +214,62 @@ class Loggly
             'performed'    => $this->performed,
             'performed_id' => $this->performedID,
             'exception'    => $this->exception,
-            'timestamp'    => $this->timestamp ? $this->timestamp->format('Y-m-d H:i:s') : now()->toDateTimeString(),
+            'timestamp'    => $this->timestamp
+                ? $this->timestamp->format('Y-m-d H:i:s')
+                : now()->toDateTimeString(),
             'request'      => $this->request,
             'response'     => $this->response,
         ]);
 
-        $this->logBuffer[] = $entry;
+        // Despacha diretamente — sem buffer duplo.
+        // Monitoring::record() possui circuit breaker e buffer próprio.
+        $this->sendToOutput($entry);
 
-        // Flush quando buffer atinge o limite OU quando estamos no console
-        // (jobs/commands não passam pelo terminating() hook do Laravel).
-        if (count($this->logBuffer) >= $this->bufferSize || app()->runningInConsole()) {
-            $this->flushLogs();
-        }
-
-        // Reseta estado fluente para a próxima chamada encadeada.
+        // Reseta estado fluente para garantir isolamento entre chamadas no singleton.
         $this->resetState();
     }
 
     /**
-     * Envia todos os logs do buffer ao destino configurado.
-     * CORRIGIDO: cada entry é enviado exatamente UMA vez.
-     */
-    private function flushLogs(): void
-    {
-        if (empty($this->logBuffer)) {
-            return;
-        }
-
-        $batch = $this->logBuffer;
-        $this->logBuffer = [];
-
-        foreach ($batch as $entry) {
-            $this->sendToOutput($entry);
-        }
-
-        unset($batch);
-    }
-
-    /**
-     * Despacha para o canal correto.
+     * Despacha a entrada ao canal configurado.
      */
     private function sendToOutput(IncomingEntry $entry): void
     {
-        switch ($this->output) {
-            case 'loggly':
-                Monitoring::recordLoggly($entry);
-                break;
+        match ($this->output) {
+            'loggly' => Monitoring::recordLoggly($entry),
+            'file'   => $this->writeToFile($entry),
+            default  => throw new InvalidArgumentException("Unsupported Loggly output: {$this->output}"),
+        };
+    }
 
-            case 'file':
-                // Canal seguro — não passa pelo sistema de eventos do Laravel.
-                // Usado pelos catch blocks dos Watchers para evitar recursão.
-                try {
-                    $line = json_encode($entry->toArray(), JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
-                    file_put_contents(
-                        storage_path('logs/error-monitoring.log'),
-                        $line . PHP_EOL,
-                        FILE_APPEND | LOCK_EX
-                    );
-                } catch (\Throwable) {
-                    // Silencia — último recurso.
-                }
-                break;
+    /**
+     * Canal de fallback seguro — não passa pelo sistema de eventos do Laravel.
+     * Usado pelos catch blocks dos Watchers para evitar recursão infinita.
+     */
+    private function writeToFile(IncomingEntry $entry): void
+    {
+        try {
 
-            default:
-                throw new InvalidArgumentException("Unsupported Loggly output: {$this->output}");
+            $entry->setType(EntryType::LOG);
+
+            $line = json_encode(
+                $entry->toArray(),
+                JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR
+            );
+
+            file_put_contents(
+                storage_path('logs/error-monitoring.log'),
+                $line . PHP_EOL,
+                FILE_APPEND | LOCK_EX
+            );
+        } catch (\Throwable $exception) { Log::info('LOGSERROR', [$exception->getMessage(), $exception->getFile(), $exception->getLine()]); ;
+            // Último recurso — silencia para não criar loop.
         }
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     /**
-     * Sanitiza propriedades, truncando valores muito grandes.
+     * Sanitiza propriedades, truncando valores que excedem o limite.
      */
     private function sanitizeProperties(array $props): array
     {
@@ -336,7 +335,13 @@ class Loggly
     }
 
     /**
-     * Reseta o estado fluente após cada log() para garantir isolamento entre chamadas.
+     * Reseta o estado fluente após cada log().
+     *
+     * Como a classe é singleton, este reset garante que chamadas consecutivas
+     * não vazem estado de uma chamada para a próxima. Exemplo correto:
+     *
+     *   logglyError()->exception($e)->log('msg1');  // level=error, exception=$e
+     *   logglyInfo()->log('msg2');                   // level=info, sem exception ✓
      */
     private function resetState(): void
     {

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace RiseTechApps\Monitoring\Repository\Contracts;
 
 use Illuminate\Support\Collection;
@@ -14,7 +16,10 @@ interface MonitoringRepositoryInterface
 
     public function getEventsByTypes(string $type): Collection;
 
-    public function getEventsByTags(): Collection;
+    /** @param  array<string, string>  $tags */
+    public function getEventsByTags(array $tags = []): Collection;
+
+    public function getEventsByUserId(string $userId): Collection;
 
     public function getByBatch(string $id): Collection;
 
