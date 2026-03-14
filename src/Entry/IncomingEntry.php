@@ -103,6 +103,12 @@ class IncomingEntry
         return (string) Str::uuid();
     }
 
+    public function setType(string $type): static
+    {
+        $this->type = $type;
+        return $this;
+    }
+
     public function toArray(): array
     {
         return [
