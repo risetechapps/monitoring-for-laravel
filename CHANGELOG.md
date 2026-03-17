@@ -5,6 +5,9 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [2.1.0] — 2025-03-17
+- Corrigido migration
+
 ## [2.0.0] — 2025-03-14
 
 ### ✨ Adicionado
