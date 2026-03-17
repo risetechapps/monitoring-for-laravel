@@ -22,36 +22,38 @@ return new class extends Migration
 
     public function up(): void
     {
-        // Índice funcional na coluna JSON tags para filtro por user_id
-        // Suporte a PostgreSQL e MySQL/MariaDB
-        $driver = DB::connection($this->getConnection())->getDriverName();
+        $connection = DB::connection($this->getConnection());
+        $driver = $connection->getDriverName();
 
         if ($driver === 'pgsql') {
-            // PostgreSQL: índice GIN para consultas JSON eficientes
-            DB::connection($this->getConnection())->statement(
-                'CREATE INDEX IF NOT EXISTS monitoring_tags_gin_idx ON monitoring USING GIN (tags)'
+            // 🔥 GIN index com cast para jsonb (resolve seu erro)
+            $connection->statement(
+                'CREATE INDEX IF NOT EXISTS monitoring_tags_gin_idx
+                 ON monitoring USING GIN ((tags::jsonb))'
             );
 
-            // Índice de expressão para user_id dentro do JSON
-            DB::connection($this->getConnection())->statement(
+            // Índice para busca por user_id dentro do JSON
+            $connection->statement(
                 "CREATE INDEX IF NOT EXISTS monitoring_tags_user_id_idx
                  ON monitoring ((tags->>'user_id'))"
             );
+
         } elseif (in_array($driver, ['mysql', 'mariadb'])) {
-            // MySQL 5.7+ / MariaDB: índice gerado virtual para user_id no JSON
-            DB::connection($this->getConnection())->statement(
+            // Coluna virtual para indexar user_id dentro do JSON
+            $connection->statement(
                 "ALTER TABLE monitoring
                  ADD COLUMN IF NOT EXISTS tags_user_id VARCHAR(36)
                  GENERATED ALWAYS AS (JSON_UNQUOTE(JSON_EXTRACT(tags, '$.user_id'))) VIRTUAL"
             );
-            DB::connection($this->getConnection())->statement(
-                'CREATE INDEX IF NOT EXISTS monitoring_tags_user_id_idx ON monitoring (tags_user_id)'
+
+            $connection->statement(
+                'CREATE INDEX IF NOT EXISTS monitoring_tags_user_id_idx
+                 ON monitoring (tags_user_id)'
             );
         }
 
-        // Índice composto para retenção: type + created_at
+        // Índice composto (type + created_at)
         $this->schema->table('monitoring', function (Blueprint $table) {
-            // Evita erro se já existir
             $sm = Schema::connection($this->getConnection())->getConnection()->getDoctrineSchemaManager();
             $indexes = array_keys($sm->listTableIndexes('monitoring'));
 
@@ -63,18 +65,21 @@ return new class extends Migration
 
     public function down(): void
     {
-        $driver = DB::connection($this->getConnection())->getDriverName();
+        $connection = DB::connection($this->getConnection());
+        $driver = $connection->getDriverName();
 
         if ($driver === 'pgsql') {
-            DB::connection($this->getConnection())
-                ->statement('DROP INDEX IF EXISTS monitoring_tags_gin_idx');
-            DB::connection($this->getConnection())
-                ->statement('DROP INDEX IF EXISTS monitoring_tags_user_id_idx');
+            $connection->statement('DROP INDEX IF EXISTS monitoring_tags_gin_idx');
+            $connection->statement('DROP INDEX IF EXISTS monitoring_tags_user_id_idx');
+
         } elseif (in_array($driver, ['mysql', 'mariadb'])) {
-            DB::connection($this->getConnection())
-                ->statement('DROP INDEX IF EXISTS monitoring_tags_user_id_idx ON monitoring');
-            DB::connection($this->getConnection())
-                ->statement('ALTER TABLE monitoring DROP COLUMN IF EXISTS tags_user_id');
+            $connection->statement(
+                'DROP INDEX monitoring_tags_user_id_idx ON monitoring'
+            );
+
+            $connection->statement(
+                'ALTER TABLE monitoring DROP COLUMN IF EXISTS tags_user_id'
+            );
         }
 
         $this->schema->table('monitoring', function (Blueprint $table) {
