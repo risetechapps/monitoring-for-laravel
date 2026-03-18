@@ -166,7 +166,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
     // Formatação
     // ---------------------------------------------------------------
 
-    protected function formatEvent(object $event, Collection $related = null): array
+    protected function formatEvent(object $event, ?Collection $related = null): array
     {
         $related = $related ?? collect();
 
