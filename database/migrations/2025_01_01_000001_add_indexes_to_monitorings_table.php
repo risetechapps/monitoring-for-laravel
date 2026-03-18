@@ -24,6 +24,7 @@ return new class extends Migration
     {
         $connection = DB::connection($this->getConnection());
         $driver = $connection->getDriverName();
+        $schema = Schema::connection($this->getConnection());
 
         if ($driver === 'pgsql') {
             // 🔥 GIN index com cast para jsonb (resolve seu erro)
@@ -53,11 +54,13 @@ return new class extends Migration
         }
 
         // Índice composto (type + created_at)
-        $this->schema->table('monitoring', function (Blueprint $table) {
-            $sm = Schema::connection($this->getConnection())->getConnection()->getDoctrineSchemaManager();
-            $indexes = array_keys($sm->listTableIndexes('monitoring'));
+        $schema->table('monitoring', function (Blueprint $table) use ($schema) {
+            // O Laravel agora tem métodos nativos para checar índices sem Doctrine
+            $hasIndex = collect($schema->getIndexes('monitoring'))
+                ->pluck('name')
+                ->contains('monitoring_type_created_at_idx');
 
-            if (!in_array('monitoring_type_created_at_idx', $indexes)) {
+            if (!$hasIndex) {
                 $table->index(['type', 'created_at'], 'monitoring_type_created_at_idx');
             }
         });

@@ -55,7 +55,7 @@ class MonitoringQueryService
     public function scopeDateRange(
         \Illuminate\Database\Query\Builder $query,
         Carbon $from,
-        Carbon $to = null
+        ?Carbon $to = null
     ): \Illuminate\Database\Query\Builder {
         $query->where('created_at', '>=', $from->toDateTimeString());
 
