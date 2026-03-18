@@ -27,7 +27,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
     protected array $jsonColumns = ['content', 'tags', 'user', 'device'];
 
-    public function __construct(string $connection = null)
+    public function __construct(?string $connection = null)
     {
         $this->connection   = $connection ?? config('monitoring.drivers.database.connection', config('database.default'));
         $this->queryService = new MonitoringQueryService($this->connection);
