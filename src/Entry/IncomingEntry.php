@@ -3,6 +3,7 @@
 namespace RiseTechApps\Monitoring\Entry;
 
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Foundation\Auth\User;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Services\BatchIdService;
@@ -15,7 +16,7 @@ class IncomingEntry
     public string $type;
     public array $content = [];
     public mixed $tags = [];
-    public Carbon $recordedAt;
+    public Carbon|CarbonInterface $recordedAt;
 
     private mixed $batchIdService;
 
@@ -28,7 +29,7 @@ class IncomingEntry
     /** Dados de device capturados no construtor */
     private array $deviceInfo = [];
 
-    public function __construct(array $content, string $uuid = null)
+    public function __construct(array $content, ?string $uuid = null)
     {
         $this->uuid = $uuid ?: self::generateUuid();
         $this->recordedAt = now();

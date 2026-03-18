@@ -54,7 +54,7 @@ return new class extends Migration
         }
 
         // Índice composto (type + created_at)
-        $schema->table('monitoring', function (Blueprint $table) use ($schema) {
+        $schema->table('monitoring', function ( $table) use ($schema) {
             // O Laravel agora tem métodos nativos para checar índices sem Doctrine
             $hasIndex = collect($schema->getIndexes('monitoring'))
                 ->pluck('name')
@@ -85,7 +85,7 @@ return new class extends Migration
             );
         }
 
-        $this->schema->table('monitoring', function (Blueprint $table) {
+        $this->schema->table('monitoring', function ( $table) {
             $table->dropIndex('monitoring_type_created_at_idx');
         });
     }

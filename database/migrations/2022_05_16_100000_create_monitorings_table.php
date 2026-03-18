@@ -43,7 +43,7 @@ return new class extends Migration
     {
         // Verificar se a tabela já não existe
         if (!$this->schema->hasTable('monitoring')) {
-            $this->schema->create('monitoring', function (Blueprint $table) {
+            $this->schema->create('monitoring', function ( $table) {
                 $table->uuid('id')->primary();
                 $table->uuid('uuid')->unique(); // UUID para identificação única
                 $table->uuid('batch_id'); // Referência ao batch
