@@ -5,6 +5,9 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [2.1.2] — 2025-03-29
+- Atualizado parametros para serem ignorados.
+
 ## [2.1.1] — 2025-03-18
 - Corrigido nullable e migration
 
