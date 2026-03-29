@@ -69,6 +69,7 @@ class CommandWatcher extends Watcher
             'schedule:run',
             'schedule:finish',
             'package:discover',
+            'horizon:status'
         ]));
     }
 }

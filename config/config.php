@@ -40,7 +40,7 @@ return [
             'options' => [
                 'ignore_http_methods' => ['options'],
                 'ignore_status_codes' => [],
-                'ignore_paths'        => ['telescope', 'telescope-api'],
+                'ignore_paths'        => ['telescope', 'telescope-api', 'up'],
                 'size_limit'          => (int) env('MONITORING_RESPONSE_SIZE_LIMIT_KB', 32),
             ],
         ],
