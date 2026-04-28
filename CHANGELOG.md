@@ -5,6 +5,190 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [3.0.0] — 2026-04-28
+
+### ✨ Adicionado
+
+#### 1. Sistema de Relatórios Automáticos — `monitoring:report`
+
+Gera relatórios periódicos (diário, semanal, mensal) com métricas e estatísticas completas.
+
+**Arquivos:**
+- `src/Console/Commands/MonitoringReportCommand.php`
+- `src/Services/Reporting/ReportService.php`
+- `resources/views/reports/report.blade.php`
+
+**Funcionamento:**
+- Relatório HTML bonito com cards, tabelas e métricas de performance
+- Envio automático via email, Slack ou Discord
+- Agendamento automático via configuração
+- Salvar relatório em arquivo (`--save`)
+
+**Exemplos de uso:**
+```bash
+# Gerar relatório diário
+php artisan monitoring:report daily
+
+# Gerar e enviar automaticamente
+php artisan monitoring:report daily --send
+
+# Enviar para canais específicos
+php artisan monitoring:report weekly --send --channels=email,slack
+
+# Preview no console
+php artisan monitoring:report monthly --preview
+
+# Salvar HTML no storage
+php artisan monitoring:report daily --save
+```
+
+**Configuração no `.env`:**
+```env
+MONITORING_REPORTS_AUTO_SCHEDULE=true
+MONITORING_REPORT_EMAIL_TO=admin@empresa.com,dev@empresa.com
+MONITORING_REPORT_EMAIL_FROM=monitoring@empresa.com
+```
+
+---
+
+#### 2. Relatórios 100% Customizáveis — `ReportHandlerInterface`
+
+Sistema completo para substituir canais de envio ou implementar notificações próprias.
+
+**Arquivos:**
+- `src/Contracts/ReportHandlerInterface.php`
+- `src/Events/ReportGenerated.php`
+
+**Métodos disponíveis:**
+```php
+// Registrar handler customizado
+ReportService::registerHandler('meu_email', new MeuEmailHandler());
+
+// Desabilitar notificações padrão (100% autônomo)
+ReportService::disableDefaultNotifications();
+```
+
+**Exemplo de Handler:**
+```php
+class MeuEmailHandler implements ReportHandlerInterface
+{
+    public function send(array $report, string $html, array $config = []): bool
+    {
+        // Sua lógica personalizada
+        return \Mail::send('minha-view', compact('report'), ...);
+    }
+
+    public function getSupportedChannels(): array
+    {
+        return ['email']; // Substitui só o email
+    }
+}
+```
+
+---
+
+#### 3. Timeline por Tag — `getTimelineByTag()`
+
+Rastreabilidade cronológica de eventos filtrados por tag, agrupados por `batch_id`.
+
+**Arquivo:** `src/Repository/MonitoringRepository.php`
+
+**Endpoint HTTP:**
+```http
+GET /monitoring/timeline/{tag}/{value}
+
+# Exemplos:
+GET /monitoring/timeline/pedido_id/123
+GET /monitoring/timeline/user_id/uuid-aqui?period=24%20hours
+```
+
+**Uso programático:**
+```php
+$timeline = $repository->getTimelineByTag('pedido_id', '123', '24 hours');
+// Retorna eventos agrupados por batch_id único
+```
+
+---
+
+#### 4. Comando para Testar Watchers — `monitoring:test-watchers`
+
+Testa todos os watchers disparando eventos de exemplo e verificando se registram corretamente.
+
+**Arquivo:** `src/Console/Commands/MonitoringTestWatchersCommand.php`
+
+**Funcionamento:**
+- Dispara eventos de teste para cada watcher
+- Verifica se os registros aparecem no banco
+- Limpa registros de teste automaticamente
+
+**Exemplos de uso:**
+```bash
+# Testar todos os watchers
+php artisan monitoring:test-watchers
+
+# Mostrar detalhes
+php artisan monitoring:test-watchers --details
+
+# Aguardar mais tempo entre testes
+php artisan monitoring:test-watchers --wait=2
+
+# Manter registros de teste
+php artisan monitoring:test-watchers --no-cleanup
+```
+
+---
+
+### 🔄 Alterado
+
+#### `ReportService`
+- Adicionado suporte a handlers customizados (`registerHandler()`)
+- Adicionado método `disableDefaultNotifications()` para 100% autonomia
+- Novo evento `ReportGenerated` disparado antes do envio
+- Processamento de handlers customizados antes dos canais padrão
+
+#### `MonitoringReportCommand`
+- Fix: Cria diretório automaticamente ao salvar relatório (`--save`)
+
+#### `MonitoringTestWatchersCommand`
+- Fix: Syntax error (ponto e vírgula faltando na closure)
+
+#### `CacheWatcher`
+- Fix: Usando método correto `Monitoring::recordCache()` em vez de `Monitoring::record()`
+
+#### `config/config.php`
+- Novo bloco `reports` com configurações de agendamento e canais
+- Suporte a `custom_handlers` para relatórios
+
+#### `README.md`
+- Documentação completa do sistema de relatórios
+- Documentação do sistema customizável (handlers e eventos)
+- Tabela comparativa: Alertas vs Relatórios
+
+---
+
+### 📁 Novos Arquivos
+
+```
+src/
+├── Console/
+│   └── Commands/
+│       └── MonitoringReportCommand.php      # Gera relatórios
+│       └── MonitoringTestWatchersCommand.php # Testa watchers
+├── Contracts/
+│   └── ReportHandlerInterface.php          # Interface para handlers
+├── Events/
+│   └── ReportGenerated.php                 # Evento de relatório
+├── Services/
+│   └── Reporting/
+│       └── ReportService.php               # Serviço de relatórios
+resources/
+└── views/
+    └── reports/
+        └── report.blade.php                # Template HTML do relatório
+```
+
+---
+
 ## [2.1.2] — 2025-03-29
 - Atualizado parametros para serem ignorados.
 
