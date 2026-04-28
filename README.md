@@ -41,6 +41,11 @@ Isso criará o arquivo `config/monitoring.php` na sua aplicação.
 php artisan migrate
 ```
 
+As migrações criam:
+- A tabela `monitoring` com os campos padrão
+- Índices para otimização de consultas
+- **Campos de resolução de exceções** (`resolved_at`, `resolved_by`) — úteis para marcar exceções como "resolvidas"
+
 ---
 
 ## Configuração
@@ -154,6 +159,25 @@ Captura exceções registradas via `Log::error()`, `Log::critical()` e similares
 
 **Dados coletados:** classe da exceção, arquivo, linha, mensagem, contexto adicional, stack trace e preview de código (linhas ao redor da exceção).
 
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\ExceptionWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Ignorar classes de exceção específicas
+        'ignore_exceptions' => [
+            \Illuminate\Validation\ValidationException::class,
+            \Symfony\Component\HttpKernel\Exception\NotFoundHttpException::class,
+        ],
+        // Ignorar exceções cujas mensagens contenham estes textos
+        'ignore_messages_containing' => ['password', 'sensitive_data'],
+        // Ignorar exceções de arquivos que contenham estes caminhos
+        'ignore_files_containing' => ['/vendor/'],
+    ],
+],
+```
+
 ---
 
 ### EventWatcher — Eventos
@@ -183,7 +207,7 @@ Monitora comandos Artisan executados.
 
 **Dados coletados:** nome do comando, código de saída (`exit_code`), argumentos e opções.
 
-> Os comandos `schedule:run`, `schedule:finish` e `package:discover` são ignorados automaticamente.
+> Os comandos `schedule:run`, `schedule:finish`, `package:discover`, `horizon:*`, `migrate:*` e outros comandos internos são ignorados automaticamente.
 
 **Opções:**
 
@@ -204,6 +228,20 @@ Registra a execução das tarefas agendadas do Laravel Scheduler.
 
 **Dados coletados:** comando ou closure, descrição, expressão cron, timezone, usuário e saída do comando.
 
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\ScheduleWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Ignorar comandos agendados específicos
+        'ignore_commands' => ['my:scheduled-command'],
+        // Ignorar closures (tarefas agendadas como closures)
+        'ignore_closures' => false,
+    ],
+],
+```
+
 ---
 
 ### JobWatcher — Jobs de Fila
@@ -214,6 +252,26 @@ Monitora o ciclo de vida completo de jobs, incluindo pendente, processado e falh
 - **Pendente:** nome, conexão, fila, tentativas, timeout, payload, `batch_id`
 - **Processado:** status, nome do job, tentativas, hostname
 - **Falho:** status, nome do job, mensagem de exceção, trace, preview de código, hostname
+
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\JobWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Ignorar namespaces de jobs
+        'ignore_namespaces' => [
+            'App\Jobs\Internal\',
+        ],
+        // Ignorar jobs específicos
+        'ignore_jobs' => [
+            \App\Jobs\HeavyLoggingJob::class,
+        ],
+    ],
+],
+```
+
+> Jobs do próprio pacote, Telescope, Horizon e Pulse são ignorados automaticamente.
 
 ---
 
@@ -248,6 +306,24 @@ Captura notificações enviadas pela aplicação.
 
 **Dados coletados:** classe da notificação, se é queued, notifiable, canal, resposta e UUID da notificação.
 
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\NotificationWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Ignorar classes de notificação específicas
+        'ignore_notifications' => [
+            \App\Notifications\TestNotification::class,
+        ],
+        // Ignorar canais específicos
+        'ignore_channels' => ['broadcast', 'slack'],
+        // Ignorar notificações anônimas (AnonymousNotifiable)
+        'ignore_anonymous' => false,
+    ],
+],
+```
+
 ---
 
 ### MailWatcher — E-mails
@@ -255,6 +331,26 @@ Captura notificações enviadas pela aplicação.
 Registra todos os e-mails enviados.
 
 **Dados coletados:** classe mailable, se é queued, remetente, reply-to, destinatários (to, cc, bcc), assunto, corpo HTML e e-mail bruto.
+
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\MailWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Ignorar classes Mailable específicas
+        'ignore_mailables' => [
+            \App\Mail\TestMail::class,
+        ],
+        // Ignorar e-mails cujo assunto contenha estes textos
+        'ignore_subjects_containing' => ['[Test]', '[Local]'],
+        // Ignorar e-mails de remetentes específicos
+        'ignore_from_addresses' => ['noreply@example.com'],
+        // Ignorar e-mails para destinatários específicos
+        'ignore_to_addresses' => ['test@example.com'],
+    ],
+],
+```
 
 ---
 
@@ -276,6 +372,71 @@ Monitora requisições HTTP feitas _pela_ aplicação usando o `Http::` facade d
         'size_limit' => 64,
     ],
 ],
+
+---
+
+### QueryWatcher — Queries Lentas
+
+Monitora automaticamente queries SQL que excedem um tempo limite configurado.
+
+**Dados coletados:** SQL completo, bindings, tempo de execução, conexão utilizada, arquivo e linha de origem.
+
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\QueryWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Threshold em ms para considerar query lenta
+        'slow_query_threshold_ms' => 100,
+        // Padrões de SQL que devem ser ignorados
+        'ignore_patterns' => ['information_schema', 'migrations', 'telescope'],
+        // Logar bindings das queries
+        'log_bindings' => true,
+        // Tamanho máximo do SQL antes de truncar
+        'max_sql_length' => 5000,
+    ],
+],
+```
+
+**Exemplo de uso:**
+
+```bash
+# Ver queries lentas
+GET /monitoring/type/query
+
+# Buscar queries específicas
+GET /monitoring/search?q=SELECT * FROM orders
+```
+
+---
+
+### CacheWatcher — Operações de Cache
+
+Monitora hits, misses, escritas e deleções no cache da aplicação.
+
+**Dados coletados:** operação (hit/miss/write/delete), key, store (redis/memcached/file), TTL (para writes).
+
+**Opções:**
+
+```php
+\RiseTechApps\Monitoring\Watchers\CacheWatcher::class => [
+    'enabled' => true,
+    'options' => [
+        // Registrar cache hits
+        'track_hits' => true,
+        // Registrar cache misses
+        'track_misses' => true,
+        // Chaves de cache que devem ser ignoradas
+        'ignore_keys' => ['config', 'routes', 'telescope'],
+    ],
+],
+```
+
+**Casos de uso:**
+- Identificar keys com baixo hit rate
+- Detectar cache thrashing (misses excessivos)
+- Analisar TTL efetivo das keys
 ```
 
 ---
@@ -383,6 +544,189 @@ class Produto extends Model
 
 ---
 
+## Métricas Customizáveis
+
+Além dos watchers automáticos, você pode registrar métricas de negócio personalizadas usando o helper `monitoring()`.
+
+### Tipos de Métricas
+
+#### Gauge (Valor Pontual)
+
+Registra um valor em um momento específico. Ideal para contagens, estados ou níveis.
+
+```php
+// Contagem de pedidos pendentes
+monitoring()->gauge('pedidos_pendentes', Pedido::where('status', 'pendente')->count());
+
+// Valor em estoque de um produto
+monitoring()->gauge('estoque_produto', $produto->quantidade, ['produto_id' => $produto->id]);
+
+// Usuários ativos no momento
+monitoring()->gauge('usuarios_ativos', Cache::get('online_users', 0));
+```
+
+#### Counter (Contador)
+
+Incrementa um contador. Ideal para eventos discretos.
+
+```php
+// Checkout concluído
+monitoring()->increment('checkout_concluido');
+
+// Incremento com valor personalizado
+monitoring()->increment('itens_vendidos', $quantidade);
+
+// Com tags adicionais
+monitoring()->increment('pagamentos', 1, ['metodo' => 'cartao']);
+monitoring()->increment('pagamentos', 1, ['metodo' => 'boleto']);
+```
+
+#### Histogram (Distribuição)
+
+Registra valores em uma distribuição. Ideal para tempos e tamanhos.
+
+```php
+// Tempo de processamento em milissegundos
+monitoring()->histogram('tempo_processamento', 250);
+
+// Tamanho da resposta da API
+monitoring()->histogram('tamanho_resposta_api', strlen($responseBody));
+
+// Com tags para segmentação
+monitoring()->histogram('tempo_db', $queryTime, ['tabela' => 'pedidos']);
+```
+
+#### Timer (Medidor de Tempo)
+
+Executa um código e automaticamente registra o tempo de execução.
+
+```php
+// Medir tempo de uma operação
+$resultado = monitoring()->timer('processar_pedido', function() use ($pedido) {
+    return $this->processarPedido($pedido);
+});
+
+// Medir chamada de API externa
+$dados = monitoring()->timer('api_pagamento', function() use ($payload) {
+    return Http::post('https://api.pagamento.com', $payload)->json();
+});
+
+// Com tags
+$relatorio = monitoring()->timer('gerar_relatorio', function() {
+    return $this->gerarRelatorioVendas();
+}, ['tipo' => 'vendas', 'periodo' => 'mensal']);
+```
+
+### Dados Coletados
+
+Cada métrica registra:
+
+| Campo | Descrição |
+|---|---|
+| `metric_type` | Tipo: `gauge`, `counter`, `histogram` |
+| `metric_name` | Nome da métrica (ex: `checkout_concluido`) |
+| `value` | Valor numérico registrado |
+| `tags` | Tags adicionais para segmentação |
+| `created_at` | Timestamp do registro |
+
+### Exemplos de Uso na Prática
+
+**Controller de Checkout:**
+```php
+class CheckoutController extends Controller
+{
+    public function processar(Request $request)
+    {
+        $resultado = monitoring()->timer('checkout_total', function() use ($request) {
+            // Validação
+            $dados = $request->validate([...]);
+
+            // Processamento do pagamento
+            $pagamento = monitoring()->timer('processar_pagamento', function() use ($dados) {
+                return $this->pagamentoService->processar($dados);
+            }, ['gateway' => $dados['gateway']]);
+
+            // Criar pedido
+            $pedido = Pedido::create([...]);
+
+            // Atualizar estoque
+            monitoring()->gauge('estoque_reduzido', $this->atualizarEstoque($pedido));
+
+            return $pedido;
+        });
+
+        monitoring()->increment('pedidos_criados', 1, [
+            'metodo_pagamento' => $resultado->metodo
+        ]);
+
+        return response()->json($resultado);
+    }
+}
+```
+
+**Job de Processamento:**
+```php
+class ProcessarImportacaoJob implements ShouldQueue
+{
+    public function handle()
+    {
+        monitoring()->gauge('registros_a_processar', $this->totalRegistros);
+
+        foreach ($this->registros as $registro) {
+            $processado = monitoring()->timer('processar_registro', function() use ($registro) {
+                return $this->processar($registro);
+            });
+
+            if ($processado) {
+                monitoring()->increment('registros_sucesso');
+            } else {
+                monitoring()->increment('registros_falha');
+            }
+        }
+
+        monitoring()->gauge('registros_restantes', 0);
+    }
+}
+```
+
+**Comando Artisan:**
+```php
+class LimparCacheCommand extends Command
+{
+    public function handle()
+    {
+        $chavesRemovidas = monitoring()->timer('limpar_cache', function() {
+            return Cache::flush();
+        });
+
+        monitoring()->increment('cache_limpo', $chavesRemovidas);
+        monitoring()->gauge('cache_tamanho', Cache::getMemoryUsage());
+
+        $this->info("Cache limpo: {$chavesRemovidas} chaves removidas.");
+    }
+}
+```
+
+### Consultando Métricas
+
+As métricas são registradas com `type = 'metric'` e podem ser consultadas via API ou repositório:
+
+```php
+use RiseTechApps\Monitoring\Entry\EntryType;
+
+// Todas as métricas
+$metricas = $monitoring->getEventsByTypes(EntryType::METRIC);
+
+// Filtrar por nome de métrica
+$checkouts = $metricas->filter(fn($m) => $m['content']['metric_name'] === 'checkout_concluido');
+
+// Calcular estatísticas
+$totalCheckouts = $checkouts->sum('content.value');
+$tempoMedio = $checkouts->where('content.metric_type', 'histogram')->avg('content.value');
+```
+
+---
+
 ## Middleware `monitoring.disable`
 
 Use o middleware para desabilitar o monitoramento em rotas específicas, como painéis administrativos ou endpoints de health check.
@@ -466,6 +810,8 @@ Quando usando os drivers `mysql` ou `pgsql`, os eventos são armazenados na tabe
 | `tags` | JSON | Tags associadas à entrada |
 | `user` | JSON | Dados do usuário autenticado |
 | `device` | JSON | Dados do dispositivo/browser |
+| `resolved_at` | timestamp (nullable) | Quando a exceção foi marcada como resolvida |
+| `resolved_by` | string (nullable) | Identificador de quem resolveu (email/user_id) |
 | `created_at` | timestamp | — |
 | `updated_at` | timestamp | — |
 
@@ -486,6 +832,7 @@ Quando usando os drivers `mysql` ou `pgsql`, os eventos são armazenados na tabe
 | `EntryType::LOG` | `log` | Log manual via Loggly |
 | `EntryType::MODEL` | `model` | Operação em Model Eloquent |
 | `EntryType::QUERY` | `query` | Query no banco de dados |
+| `EntryType::METRIC` | `metric` | Métrica de negócio customizada |
 
 ---
 
@@ -630,12 +977,21 @@ $monitoring->getLast90Days();   // Últimos 90 dias
 | `getEventsByTypes()` |     ✅      | ❌ |
 | `getEventsByTags()` |     ✅      | ✅* |
 | `getByBatch()` |     ✅      | ❌ |
+| `getTimelineByTag()` |     ✅      | ❌ |
+| `gauge()` |     ✅      | ✅ |
+| `increment()` |     ✅      | ✅ |
+| `histogram()` |     ✅      | ✅ |
+| `timer()` |     ✅      | ✅ |
 | `getLast24Hours()` |     ✅      | ❌ |
 | `getLast7Days()` |     ✅      | ❌ |
 | `getLast15Days()` |     ✅      | ❌ |
 | `getLast30Days()` |     ✅      | ❌ |
 | `getLast60Days()` |     ✅      | ❌ |
 | `getLast90Days()` |     ✅      | ❌ |
+| `resolveEvent()` |     ✅      | ❌ |
+| `resolveExceptionType()` |     ✅      | ❌ |
+| `unresolveEvent()` |     ✅      | ❌ |
+| `getUnresolvedExceptions()` |     ✅      | ❌ |
 
 > *`getEventsByTags()` no driver `single` retorna apenas a lista de tipos disponíveis.
 
@@ -671,8 +1027,1068 @@ Monitoring::routes([
 | `GET` | `/monitoring/{id}` | `monitoring.show` | Detalhe de um evento + relacionados |
 | `GET` | `/monitoring/type/{type}` | `monitoring.type` | Filtra por tipo |
 | `POST` | `/monitoring/tags` | `monitoring.tags` | Lista tipos disponíveis |
+| `GET` | `/monitoring/timeline/{tag}/{value}` | `monitoring.timeline` | Timeline cronológico por tag |
+
+**Rotas de Health Check:**
+
+| Método | URI | Nome | Descrição |
+|---|---|---|---|
+| `GET` | `/monitoring/health` | `monitoring.health` | Verifica saúde da aplicação (DB, Cache, Queue, Storage) |
+
+**Rotas de Busca e Comparação:**
+
+| Método | URI | Nome | Descrição |
+|---|---|---|---|
+| `GET` | `/monitoring/search` | `monitoring.search` | Busca full-text nos eventos |
+| `GET` | `/monitoring/compare` | `monitoring.compare` | Compara métricas entre dois períodos |
+
+**Rotas de Resolução de Exceções:**
+
+| Método | URI | Nome | Descrição |
+|---|---|---|---|
+| `GET` | `/monitoring/exceptions/unresolved` | `monitoring.exceptions.unresolved` | Lista exceções não resolvidas agrupadas por tipo |
+| `POST` | `/monitoring/resolve-exception` | `monitoring.exceptions.resolve-type` | Marca todas as exceções de um tipo como resolvidas |
+| `POST` | `/monitoring/{id}/resolve` | `monitoring.resolve` | Marca um evento específico como resolvido |
+| `POST` | `/monitoring/{id}/unresolve` | `monitoring.unresolve` | Remove o status de resolvido de um evento |
 
 > As rotas do painel de monitoramento usam automaticamente o middleware `monitoring.disable` para não serem monitoradas.
+
+---
+
+### Timeline por Tag
+
+Visualize o fluxo completo de eventos relacionados a uma tag específica em ordem cronológica. Útil para rastrear o ciclo de vida de um pedido, usuário, ou qualquer entidade monitorada.
+
+#### Endpoint
+
+```bash
+GET /monitoring/timeline/{tag}/{value}?period=24%20hours
+```
+
+**Parâmetros:**
+
+| Parâmetro | Tipo | Obrigatório | Descrição |
+|-----------|------|-------------|-----------|
+| `tag` | string | Sim | Nome da tag (ex: `pedido_id`) |
+| `value` | string | Sim | Valor da tag (ex: `123`) |
+| `period` | string | Não | Período de busca. Padrão: `24 hours`. Opções: `1 hour`, `6 hours`, `12 hours`, `24 hours`, `7 days`, `30 days`, `90 days` |
+
+#### Exemplos de uso
+
+**Timeline de um pedido:**
+
+```bash
+GET /monitoring/timeline/pedido_id/123?period=24%20hours
+```
+
+**Timeline de um usuário específico:**
+
+```bash
+GET /monitoring/timeline/user_id/550e8400-e29b-41d4-a716-446655440000?period=7%20days
+```
+
+#### Resposta
+
+```json
+{
+  "tag": "pedido_id",
+  "value": "123",
+  "period": "24 hours",
+  "total_batches": 2,
+  "timeline": [
+    {
+      "batch_id": "abc-123-uuid",
+      "started_at": "2025-01-15 10:23:15",
+      "timeline": [
+        {
+          "id": "...",
+          "type": "request",
+          "type_label": "Requisição HTTP",
+          "icon": "🌐",
+          "content": { "method": "POST", "uri": "/api/pedidos", ... },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 10:23:15"
+        },
+        {
+          "id": "...",
+          "type": "query",
+          "type_label": "Query SQL",
+          "icon": "🗄️",
+          "content": { "sql": "INSERT INTO pedidos...", "time_ms": 45 },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 10:23:15"
+        },
+        {
+          "id": "...",
+          "type": "job",
+          "type_label": "Job",
+          "icon": "⚙️",
+          "content": { "displayName": "ProcessarPedidoJob", ... },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 10:23:16"
+        },
+        {
+          "id": "...",
+          "type": "mail",
+          "type_label": "E-mail",
+          "icon": "📧",
+          "content": { "subject": "Pedido #123 recebido", ... },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 10:23:18"
+        }
+      ],
+      "duration_ms": 3000,
+      "event_count": 4
+    },
+    {
+      "batch_id": "def-456-uuid",
+      "started_at": "2025-01-15 14:45:22",
+      "timeline": [
+        {
+          "id": "...",
+          "type": "request",
+          "type_label": "Requisição HTTP",
+          "icon": "🌐",
+          "content": { "method": "PUT", "uri": "/api/pedidos/123", ... },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 14:45:22"
+        },
+        {
+          "id": "...",
+          "type": "query",
+          "type_label": "Query SQL",
+          "icon": "🗄️",
+          "content": { "sql": "UPDATE pedidos...", "time_ms": 23 },
+          "tags": { "pedido_id": "123" },
+          "created_at": "2025-01-15 14:45:22"
+        }
+      ],
+      "duration_ms": 800,
+      "event_count": 2
+    }
+  ]
+}
+
+> **Nota:** Os eventos são agrupados por `batch_id` único. Se múltiplos eventos 
+> compartilharem o mesmo batch_id, você recebe apenas uma entrada na timeline 
+> contendo todos os eventos relacionados.
+```
+
+#### Uso programático
+
+```php
+use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
+
+class PedidoController extends Controller
+{
+    public function __construct(
+        protected MonitoringRepositoryInterface $monitoring
+    ) {}
+
+    public function timeline(string $pedidoId)
+    {
+        // Busca todos os eventos relacionados ao pedido nas últimas 24h
+        // Agrupados por batch_id único
+        $timeline = $this->monitoring->getTimelineByTag('pedido_id', $pedidoId, '24 hours');
+
+        return response()->json([
+            'pedido_id' => $pedidoId,
+            'total_operacoes' => $timeline->count(),
+            'operacoes' => $timeline->map(function ($batch) {
+                return [
+                    'batch_id' => $batch['batch_id'],
+                    'inicio' => $batch['started_at'],
+                    'fim' => $batch['timeline']->last()['created_at'] ?? null,
+                    'duracao_ms' => $batch['duration_ms'],
+                    'eventos' => $batch['event_count'],
+                    'passos' => $batch['timeline']->map(fn ($e) => [
+                        'hora' => $e['created_at'],
+                        'tipo' => $e['type_label'],
+                        'icone' => $e['icon'],
+                    ]),
+                ];
+            }),
+        ]);
+    }
+}
+```
+
+---
+
+### Gerenciamento de Exceções Resolvidas
+
+O pacote permite marcar exceções como "resolvidas", facilitando o acompanhamento de bugs e evitando poluição visual no dashboard.
+
+#### Campos adicionais na resposta
+
+Quando um evento é resolvido, os seguintes campos são adicionados à resposta:
+
+```php
+[
+  'id'             => '...',
+  'uuid'           => '...',
+  'type'           => 'exception',
+  'content'        => [...],
+  // ... outros campos ...
+  'resolved_at'    => '2025-01-15 14:30:00',  // quando foi resolvido
+  'resolved_by'    => 'user@example.com',     // quem resolveu
+  'is_resolved'    => true,                   // flag booleana
+]
+```
+
+#### Listar exceções não resolvidas
+
+```bash
+GET /monitoring/exceptions/unresolved
+```
+
+**Resposta:**
+```json
+[
+  {
+    "exception_class": "App\\Exceptions\\CustomException",
+    "count": 15,
+    "last_occurrence": "2025-01-15 10:23:00"
+  },
+  {
+    "exception_class": "Illuminate\\Validation\\ValidationException",
+    "count": 3,
+    "last_occurrence": "2025-01-15 09:45:00"
+  }
+]
+```
+
+#### Marcar uma exceção como resolvida
+
+```bash
+POST /monitoring/{id}/resolve
+Content-Type: application/json
+
+{
+  "resolved_by": "user@example.com"
+}
+```
+
+#### Marcar múltiplas exceções do mesmo tipo como resolvidas
+
+```bash
+POST /monitoring/resolve-exception
+Content-Type: application/json
+
+{
+  "exception_class": "App\\Exceptions\\CustomException",
+  "resolved_by": "user@example.com"
+}
+```
+
+**Resposta:**
+```json
+{
+  "message": "15 exceções marcadas como resolvidas.",
+  "exception_class": "App\\Exceptions\\CustomException",
+  "count": 15
+}
+```
+
+#### Desfazer a resolução
+
+```bash
+POST /monitoring/{id}/unresolve
+```
+
+#### Uso programático
+
+```php
+use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
+
+class ExceptionController extends Controller
+{
+    public function __construct(
+        protected MonitoringRepositoryInterface $monitoring
+    ) {}
+
+    // Marcar como resolvida
+    public function resolve(string $id)
+    {
+        $success = $this->monitoring->resolveEvent(
+            $id,
+            auth()->user()?->email
+        );
+
+        return $success
+            ? response()->json(['message' => 'Resolvido!'])
+            : response()->json(['message' => 'Não encontrado'], 404);
+    }
+
+    // Listar não resolvidas
+    public function unresolved()
+    {
+        $exceptions = $this->monitoring->getUnresolvedExceptions();
+
+        return response()->json($exceptions);
+    }
+}
+```
+
+---
+
+## Health Check
+
+Endpoint para verificar a saúde da aplicação e suas dependências.
+
+### Endpoint
+
+```bash
+GET /monitoring/health
+```
+
+### Resposta
+
+```json
+{
+    "status": "healthy",
+    "checks": {
+        "database": { "status": "ok" },
+        "cache": { "status": "ok", "driver": "redis" },
+        "queue": { "status": "ok", "driver": "redis", "queue_size": 0 },
+        "storage": { "status": "ok", "disk": "local" }
+    },
+    "performance": {
+        "apdex_score": 0.94,
+        "throughput_per_minute": 245,
+        "error_rate_percent": 0.5
+    },
+    "timestamp": "2025-01-15T10:30:00Z"
+}
+```
+
+### Status possíveis
+
+| Status | Significado |
+|---|---|
+| `healthy` | Todos os sistemas OK |
+| `degraded` | Algum sistema com problemas leves |
+| `unhealthy` | Falha crítica em algum sistema |
+
+### Uso em Load Balancers
+
+```bash
+# Health check para load balancer
+GET /monitoring/health
+
+# Retorna 200 se healthy/degraded
+# Retorna 503 se unhealthy
+```
+
+---
+
+## Sistema de Alertas
+
+Configure notificações automáticas para eventos críticos via Slack, Discord ou Email.
+
+### Configuração
+
+```php
+// config/monitoring.php
+'alerts' => [
+    'enabled' => env('MONITORING_ALERTS_ENABLED', true),
+
+    // Webhooks
+    'slack_webhook' => env('MONITORING_SLACK_WEBHOOK'),
+    'discord_webhook' => env('MONITORING_DISCORD_WEBHOOK'),
+
+    // Email
+    'email' => [
+        'enabled' => true,
+        'to' => ['devops@empresa.com'],
+        'from' => 'monitoring@empresa.com',
+    ],
+
+    // Thresholds
+    'thresholds' => [
+        'exceptions_per_minute' => 10,
+        'failed_jobs_per_hour' => 5,
+        'slow_request_ms' => 5000,
+        'slow_queries_per_minute' => 10,
+        'error_rate_percent' => 5.0,
+    ],
+
+    // Cooldown entre alertas (minutos)
+    'cooldown_minutes' => 5,
+],
+```
+
+### Variáveis de ambiente
+
+```env
+MONITORING_ALERTS_ENABLED=true
+MONITORING_SLACK_WEBHOOK=https://hooks.slack.com/services/...
+MONITORING_DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
+MONITORING_ALERTS_EMAIL_TO=devops@empresa.com,admin@empresa.com
+```
+
+### Alertas Disparados
+
+| Evento | Threshold | Mensagem |
+|---|---|---|
+| Exceção em produção | Qualquer | 🚨 Exceção: `{class}` - `{message}` |
+| Requisição lenta | > 5000ms | ⏱️ Requisição lenta: `{uri}` - `{duration}ms` |
+| Job falho | > 5/hora | 🔥 Job falhou: `{job}` |
+| Query lenta | > 100ms | 🐢 Query lenta: `{time}ms` |
+
+### Cooldown
+
+Para evitar spam, o mesmo tipo de alerta só é enviado a cada 5 minutos (configurável).
+
+---
+
+## Relatórios Automáticos
+
+Gere relatórios periódicos (diário, semanal, mensal) com métricas e estatísticas completas do sistema de monitoramento.
+
+### Configuração
+
+```php
+// config/monitoring.php
+'reports' => [
+    'auto_schedule' => env('MONITORING_REPORTS_AUTO_SCHEDULE', false),
+    'timezone' => 'America/Sao_Paulo',
+
+    'daily' => [
+        'enabled' => true,
+        'send_at' => '08:00',
+    ],
+    'weekly' => [
+        'enabled' => true,
+        'send_at' => '08:00',
+        'day' => 'monday',
+    ],
+    'monthly' => [
+        'enabled' => true,
+        'send_at' => '08:00',
+    ],
+
+    'channels' => [
+        'email' => [
+            'enabled' => true,
+            'to' => ['devops@empresa.com'],
+            'from' => 'monitoring@empresa.com',
+        ],
+        'slack' => ['enabled' => true],
+        'discord' => ['enabled' => true],
+    ],
+],
+```
+
+### Variáveis de Ambiente
+
+```env
+MONITORING_REPORTS_AUTO_SCHEDULE=true
+MONITORING_REPORT_EMAIL_TO=devops@empresa.com,admin@empresa.com
+MONITORING_REPORT_EMAIL_FROM=monitoring@empresa.com
+
+# Canais
+MONITORING_REPORT_EMAIL_ENABLED=true
+MONITORING_REPORT_SLACK_ENABLED=true
+MONITORING_REPORT_DISCORD_ENABLED=false
+```
+
+### Comando Artisan
+
+```bash
+# Gerar relatório diário
+php artisan monitoring:report daily
+
+# Gerar e enviar automaticamente
+php artisan monitoring:report daily --send
+
+# Enviar para canais específicos
+php artisan monitoring:report weekly --send --channels=email,slack
+
+# Preview no console
+php artisan monitoring:report monthly --preview
+
+# Salvar HTML no storage
+php artisan monitoring:report daily --save
+```
+
+### Conteúdo do Relatório
+
+Cada relatório inclui:
+
+**1. Resumo Executivo**
+- Total de eventos
+- Exceções, requisições, jobs
+- Taxa de erro
+- Tempo médio de resposta
+
+**2. Métricas de Performance**
+- Apdex Score
+- Tempo mínimo, máximo e médio
+- Queries lentas
+
+**3. Eventos por Tipo**
+- Distribuição percentual
+- Gráficos de barras
+
+**4. Top Erros**
+- Exceções mais frequentes (não resolvidas)
+- Contagem de ocorrências
+
+**5. Tendências**
+- Comparação com período anterior
+- Indicadores de crescimento/queda
+
+### Agendamento Automático
+
+Com `MONITORING_REPORTS_AUTO_SCHEDULE=true`:
+
+| Relatório | Frequência | Horário |
+|-----------|-----------|---------|
+| Diário | Todo dia | 08:00 |
+| Semanal | Segundas-feiras | 08:00 |
+| Mensal | Dia 1 de cada mês | 08:00 |
+
+---
+
+## Relatórios Customizáveis (100% Autônomo)
+
+O sistema de relatórios permite **100% de autonomia** no envio. Você pode usar:
+
+1. **Handlers Customizados** - Substituir canais específicos ou todos
+2. **Event Listener** - Controle total via evento `ReportGenerated`
+3. **Notificações Padrão** - Email, Slack, Discord (funciona sem configuração extra)
+
+### Controle Total - Desabilitar Padrão
+
+Para usar **apenas** suas notificações customizadas:
+
+```php
+// Em um ServiceProvider
+use RiseTechApps\Monitoring\Services\Reporting\ReportService;
+
+public function boot(): void
+{
+    // Desabilita notificações padrão
+    ReportService::disableDefaultNotifications();
+}
+```
+
+### Handler Customizado para Relatórios
+
+Implemente `ReportHandlerInterface` para criar seu próprio envio:
+
+```php
+<?php
+
+namespace App\Monitoring\Handlers;
+
+use RiseTechApps\Monitoring\Contracts\ReportHandlerInterface;
+
+class MinhaNotificacaoEmail implements ReportHandlerInterface
+{
+    public function send(array $report, string $html, array $config = []): bool
+    {
+        // Use sua própria lógica de envio
+        return \Mail::send('minha-view-relatorio', [
+            'relatorio' => $report,
+        ], function ($message) use ($report, $config) {
+            $message->to($config['to'] ?? 'admin@empresa.com')
+                ->subject($report['period_label']);
+        });
+    }
+
+    public function isConfigured(array $config = []): bool
+    {
+        return !empty($config['to']);
+    }
+
+    public function getName(): string
+    {
+        return 'minha_notificacao_email';
+    }
+
+    public function getSupportedChannels(): array
+    {
+        return ['email']; // Substitui só o email
+        // return []; // Todos os canais
+        // return ['email', 'slack']; // Email + Slack
+    }
+}
+```
+
+Registre o handler:
+
+```php
+use RiseTechApps\Monitoring\Services\Reporting\ReportService;
+use App\Monitoring\Handlers\MinhaNotificacaoEmail;
+
+public function boot(): void
+{
+    // Substitui apenas o canal de email
+    ReportService::registerHandler('meu_email', new MinhaNotificacaoEmail());
+    
+    // Ou desabilita padrão e usa só o seu
+    ReportService::disableDefaultNotifications();
+}
+```
+
+Configure no `config/monitoring.php`:
+
+```php
+'reports' => [
+    // ... outras configurações ...
+    
+    'custom_handlers' => [
+        'meu_email' => [
+            'to' => 'admin@empresa.com',
+            'from' => 'monitoring@empresa.com',
+        ],
+    ],
+],
+```
+
+### Evento ReportGenerated
+
+Ouça o evento para controle total:
+
+```php
+<?php
+
+namespace App\Listeners;
+
+use RiseTechApps\Monitoring\Events\ReportGenerated;
+
+class EnviarMeuRelatorio
+{
+    public function handle(ReportGenerated $event): void
+    {
+        // Acesso completo aos dados
+        $period = $event->report['period'];      // 'daily', 'weekly', 'monthly'
+        $summary = $event->report['summary'];    // Métricas
+        $html = $event->html;                     // HTML renderizado
+        $channels = $event->channels;            // Canais solicitados
+        
+        // Envio customizado
+        foreach ($channels as $channel) {
+            match($channel) {
+                'email' => $this->enviarEmailCustom($event),
+                'slack' => $this->enviarSlackCustom($event),
+                default => null,
+            };
+        }
+        
+        // Suprime envio padrão (100% autônomo)
+        $event->markAsHandled();
+        $event->suppressDefaultNotifications();
+    }
+}
+```
+
+Registre no `EventServiceProvider`:
+
+```php
+protected $listen = [
+    \RiseTechApps\Monitoring\Events\ReportGenerated::class => [
+        \App\Listeners\EnviarMeuRelatorio::class,
+    ],
+];
+```
+
+### Comparativo: Alertas vs Relatórios
+
+| Recurso | Alertas (runtime) | Relatórios (periódicos) |
+|---------|-------------------|-------------------------|
+| Interface | `AlertHandlerInterface` | `ReportHandlerInterface` |
+| Evento | `AlertTriggered` | `ReportGenerated` |
+| Service | `AlertService` | `ReportService` |
+| Contexto | Evento individual (exceção, etc) | Dados agregados do período |
+| Dados | `IncomingEntry` | `array $report` + `string $html` |
+| Canais | Email, Slack, Discord | Email, Slack, Discord |
+
+---
+
+## Notificações Customizáveis (Alertas)
+
+Além dos canais padrão (Slack, Discord, Email), você pode criar notificações customizadas usando **Handlers** ou ouvindo o evento `AlertTriggered`.
+
+### Método 1: Handler Customizado (Recomendado)
+
+Crie uma classe implementando `AlertHandlerInterface`:
+
+```php
+<?php
+
+namespace App\Monitoring\Handlers;
+
+use RiseTechApps\Monitoring\Contracts\AlertHandlerInterface;
+use RiseTechApps\Monitoring\Entry\IncomingEntry;
+
+class TelegramAlertHandler implements AlertHandlerInterface
+{
+    public function send(string $type, IncomingEntry $entry, array $config = []): bool
+    {
+        $botToken = $config['bot_token'] ?? config('services.telegram.bot_token');
+        $chatId = $config['chat_id'] ?? config('services.telegram.chat_id');
+
+        $message = $this->formatMessage($type, $entry);
+
+        $response = Http::post("https://api.telegram.org/bot{$botToken}/sendMessage", [
+            'chat_id' => $chatId,
+            'text' => $message,
+            'parse_mode' => 'HTML',
+        ]);
+
+        return $response->successful();
+    }
+
+    public function isConfigured(array $config = []): bool
+    {
+        return !empty($config['bot_token']) && !empty($config['chat_id']);
+    }
+
+    public function getName(): string
+    {
+        return 'telegram';
+    }
+
+    private function formatMessage(string $type, IncomingEntry $entry): string
+    {
+        $content = $entry->content;
+
+        return match ($type) {
+            'exception' => "<b>🚨 Exceção</b>\n" .
+                "Classe: {$content['class']}\n" .
+                "Mensagem: {$content['message']}",
+            'request' => "<b>⏱️ Requisição Lenta</b>\n" .
+                "{$content['method']} {$content['uri']}\n" .
+                "Duração: {$content['duration']}ms",
+            default => "<b>Alerta:</b> {$type}",
+        };
+    }
+}
+```
+
+Registre o handler em um `ServiceProvider`:
+
+```php
+<?php
+
+namespace App\Providers;
+
+use App\Monitoring\Handlers\TelegramAlertHandler;
+use Illuminate\Support\ServiceProvider;
+use RiseTechApps\Monitoring\Services\Alerts\AlertService;
+
+class MonitoringServiceProvider extends ServiceProvider
+{
+    public function boot(): void
+    {
+        // Registra o handler customizado
+        AlertService::registerHandler('telegram', new TelegramAlertHandler());
+    }
+}
+```
+
+Configure o handler no `config/monitoring.php`:
+
+```php
+'alerts' => [
+    'enabled' => true,
+
+    // ... configurações padrão ...
+
+    // Handlers customizados
+    'custom_handlers' => [
+        'telegram' => [
+            'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+            'chat_id' => env('TELEGRAM_CHAT_ID'),
+        ],
+    ],
+],
+```
+
+### Método 2: Event Listener
+
+Ouça o evento `AlertTriggered` para executar ações customizadas:
+
+```php
+<?php
+
+namespace App\Listeners;
+
+use RiseTechApps\Monitoring\Events\AlertTriggered;
+
+class SendPagerDutyNotification
+{
+    public function handle(AlertTriggered $event): void
+    {
+        // Apenas para exceções críticas
+        if ($event->type !== 'exception') {
+            return;
+        }
+
+        $content = $event->entry->content;
+
+        // Envia para PagerDuty
+        Http::post(config('services.pagerduty.webhook'), [
+            'routing_key' => config('services.pagerduty.key'),
+            'event_action' => 'trigger',
+            'payload' => [
+                'summary' => $content['message'],
+                'severity' => 'critical',
+                'source' => $content['file'] ?? 'unknown',
+            ],
+        ]);
+
+        // Marca como handled para pular notificações padrão (opcional)
+        // $event->markAsHandled();
+    }
+}
+```
+
+Registre o listener no `EventServiceProvider`:
+
+```php
+protected $listen = [
+    \RiseTechApps\Monitoring\Events\AlertTriggered::class => [
+        \App\Listeners\SendPagerDutyNotification::class,
+    ],
+];
+```
+
+### Desabilitar Notificações Padrão
+
+Para usar apenas notificações customizadas:
+
+```php
+use RiseTechApps\Monitoring\Services\Alerts\AlertService;
+
+// Em um ServiceProvider::boot()
+AlertService::disableDefaultNotifications();
+```
+
+Para reabilitar:
+
+```php
+AlertService::enableDefaultNotifications();
+```
+
+### Ordem de Processamento
+
+1. Evento `AlertTriggered` é disparado → listeners podem processar
+2. Se `$event->handled = true`, notificações padrão são ignoradas
+3. Handlers customizados são executados
+4. Notificações padrão (Slack/Discord/Email) são enviadas (se não desabilitadas)
+
+### Exemplo: Notificação para Múltiplos Canais
+
+```php
+// Handler para Microsoft Teams
+class TeamsAlertHandler implements AlertHandlerInterface
+{
+    public function send(string $type, IncomingEntry $entry, array $config = []): bool
+    {
+        $webhook = $config['webhook_url'];
+
+        $card = [
+            '@type' => 'MessageCard',
+            '@context' => 'https://schema.org/extensions',
+            'themeColor' => $this->getColorForType($type),
+            'summary' => "Alerta: {$type}",
+            'sections' => [
+                [
+                    'activityTitle' => "Alerta de Monitoramento: {$type}",
+                    'facts' => $this->buildFacts($entry),
+                ],
+            ],
+        ];
+
+        Http::post($webhook, $card);
+        return true;
+    }
+
+    public function isConfigured(array $config = []): bool
+    {
+        return !empty($config['webhook_url']);
+    }
+
+    public function getName(): string
+    {
+        return 'teams';
+    }
+}
+```
+
+---
+
+## Performance Monitoring
+
+Métricas avançadas de performance calculadas automaticamente.
+
+### Configuração
+
+```php
+'performance' => [
+    'track_memory_peaks' => true,
+    'track_db_connections' => true,
+    'track_cache_hits' => true,
+
+    'apdex' => [
+        'threshold' => 500,   // ms - satisfatório
+        'tolerable' => 2000,  // ms - tolerável
+    ],
+],
+```
+
+### Métricas Calculadas
+
+#### Apdex Score
+
+Mede satisfação do usuário (0.0 a 1.0):
+- `1.0` = Perfeito
+- `0.94-0.99` = Excelente
+- `0.85-0.93` = Bom
+- `0.70-0.84` = Justo
+- `< 0.70` = Ruim
+
+#### Throughput
+
+Requisições por minuto processadas.
+
+#### Latência Percentil
+
+| Métrica | Significado |
+|---|---|
+| `p50` (mediana) | 50% das requisições são mais rápidas que isso |
+| `p95` | 95% das requisições são mais rápidas |
+| `p99` | 99% das requisições são mais rápidas |
+
+#### Exemplo de resposta
+
+```json
+{
+    "apdex_score": 0.94,
+    "throughput_per_minute": 245,
+    "error_rate_percent": 0.5,
+    "latency": {
+        "p50": 120,
+        "p95": 450,
+        "p99": 890,
+        "avg": 180,
+        "min": 45,
+        "max": 1200
+    },
+    "memory": {
+        "peak_avg_mb": 64,
+        "peak_max_mb": 128
+    }
+}
+```
+
+---
+
+## Filtros Avançados na API
+
+### Parâmetros de busca
+
+```bash
+# Filtrar por tipo e período
+GET /monitoring?type=exception&from=2025-01-01&to=2025-01-15
+
+# Apenas exceções não resolvidas
+GET /monitoring?type=exception&unresolved=true
+
+# Ordenação personalizada
+GET /monitoring?sort=created_at&order=asc&per_page=25
+
+# Busca full-text
+GET /monitoring/search?q=PaymentException
+
+# Busca por tipo específico
+GET /monitoring/search?q=TimeoutException&type=exception
+```
+
+### Comparação de Períodos
+
+```bash
+GET /monitoring/compare?period1=last_7_days&period2=previous_7_days
+```
+
+**Resposta:**
+
+```json
+{
+    "period1": {
+        "name": "last_7_days",
+        "data": { "total": 1250, "by_type": {...} }
+    },
+    "period2": {
+        "name": "previous_7_days",
+        "data": { "total": 980, "by_type": {...} }
+    },
+    "changes": {
+        "total_diff": 270,
+        "total_percent": 27.55
+    }
+}
+```
+
+---
+
+## Política de Retenção Inteligente
+
+Configure retenção diferenciada por tipo de dado.
+
+### Configuração
+
+```php
+'retention' => [
+    'days' => 90,  // Padrão fallback
+
+    // Políticas granulares
+    'granular' => [
+        'exceptions' => 90,   // Manter exceções por mais tempo
+        'requests'   => 30,   // Requisições por menos tempo
+        'jobs'       => 60,
+        'queries'    => 7,    // Queries por pouco tempo
+        'cache'      => 7,
+        'metrics'    => 30,
+    ],
+
+    // Manter exceções não resolvidas além do prazo
+    'keep_unresolved' => true,
+],
+```
+
+### Comando de retenção
+
+```bash
+# Retenção padrão
+php artisan monitoring:retention
+
+# Com políticas granulares
+php artisan monitoring:retention --granular
+
+# Manter exceções não resolvidas
+php artisan monitoring:retention --keep-unresolved
+
+# Simular sem executar
+php artisan monitoring:retention --dry-run
+```
+
+### Agendamento automático
+
+```php
+// App/Console/Kernel.php
+protected function schedule(Schedule $schedule): void
+{
+    $schedule->command('monitoring:retention --granular --force')
+        ->dailyAt('02:00');
+}
+```
+
+---
 
 **Exemplos de requisição:**
 
@@ -737,6 +2153,103 @@ class MonitoringDashboardController extends Controller
     }
 }
 ```
+
+---
+
+## Diagnóstico e Troubleshooting
+
+### Testar Watchers (`monitoring:test-watchers)
+
+Execute um diagnóstico completo para verificar se todos os watchers estão funcionando corretamente. O comando dispara eventos de teste e verifica se foram registrados no banco.
+
+```bash
+# Teste completo
+php artisan monitoring:test-watchers
+
+# Com detalhes
+php artisan monitoring:test-watchers --verbose
+
+# Aguardar mais tempo entre testes
+php artisan monitoring:test-watchers --wait=3
+
+# Não limpar registros de teste (para debug)
+php artisan monitoring:test-watchers --no-cleanup
+```
+
+#### Testes executados
+
+| Watcher | Evento de Teste | O que é verificado |
+|---------|-----------------|-------------------|
+| Exception | Exception de teste | Captura de exceções |
+| Query | SELECT simples | Monitoramento de queries |
+| Cache | Write, Hit, Miss, Delete | Operações de cache |
+| Log | Log::info() | Mensagens de log |
+| Event | Evento de locale | Eventos disparados |
+| Gate | Gate de teste | Autorizações |
+| Mail | Mailable de teste | Envio de e-mail |
+| Notification | Notificação de teste | Notificações |
+| HTTP Client | Request fake | Requisições HTTP |
+
+#### Saída esperada
+
+```
+┌─────────────────────────────────────────────────┐
+│     Monitoring — Teste de Watchers              │
+└─────────────────────────────────────────────────┘
+
+✓ Monitoramento habilitado
+
+Testando: Exception Watcher
+  ✓ Evento disparado
+
+Testando: Query Watcher
+  ✓ Evento disparado
+
+...
+
+Verificando registros no banco...
+
+  ✓ Exception Watcher: 1 registro(s) encontrado(s)
+  ✓ Query Watcher: 1 registro(s) encontrado(s)
+  ✓ Cache Watcher: 4 registro(s) encontrado(s)
+  ...
+
+─────────────────────────────────────────────────
+RESUMO DOS TESTES
+─────────────────────────────────────────────────
+
+Total: 9 | Eventos disparados: 9 | Registros no DB: 8
+
+┌─────────────────────────┬───────────────────┬────────────┐
+│ Watcher                 │ Status            │ Registros  │
+├─────────────────────────┼───────────────────┼────────────┤
+│ Exception Watcher       │ ✓ OK              │ 1          │
+│ Query Watcher           │ ✓ OK              │ 1          │
+│ Cache Watcher           │ ✓ OK              │ 4          │
+│ Log Watcher             │ ✓ OK              │ 1          │
+│ ...                     │ ...               │ ...        │
+└─────────────────────────┴───────────────────┴────────────┘
+```
+
+#### Possíveis problemas
+
+**"Monitoramento está DESABILITADO"**
+```bash
+# Verifique a configuração
+cat .env | grep MONITORING_ENABLED
+
+# Ou habilite temporariamente
+php artisan tinker --execute="config(['monitoring.enabled' => true])"
+```
+
+**Watcher não registra no banco**
+- Verifique se o watcher está habilitado em `config/monitoring.php`
+- Confirme se o driver é `database` (não `single`)
+- Execute com `--wait=5` para dar mais tempo ao buffer
+
+**"0 registros encontrados"**
+- Driver `single` grava em arquivo, não no banco — isso é normal
+- Verifique `storage/logs/monitoring.log` para logs em arquivo
 
 ---
 
