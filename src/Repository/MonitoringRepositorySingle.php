@@ -81,4 +81,56 @@ class MonitoringRepositorySingle implements MonitoringRepositoryInterface
     {
         return collect();
     }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function resolveEvent(string $id, ?string $resolvedBy = null): bool
+    {
+        // Driver de arquivo não suporta resolução
+        return false;
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function resolveExceptionType(string $exceptionClass, ?string $resolvedBy = null): int
+    {
+        // Driver de arquivo não suporta resolução em massa
+        return 0;
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function unresolveEvent(string $id): bool
+    {
+        // Driver de arquivo não suporta resolução
+        return false;
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function getUnresolvedExceptions(): Collection
+    {
+        // Driver de arquivo não suporta consulta de exceções
+        return collect();
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function getEventsWithFilters(array $filters): Collection
+    {
+        return collect();
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
+    public function searchEvents(string $query, ?string $type = null): Collection
+    {
+        return collect();
+    }
 }

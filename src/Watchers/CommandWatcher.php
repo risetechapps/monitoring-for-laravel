@@ -55,6 +55,35 @@ class CommandWatcher extends Watcher
     }
 
     /**
+     * Lista de comandos internos do framework que sempre devem ser ignorados.
+     * Estes são comandos de manutenção e não devem gerar logs de monitoramento.
+     */
+    private const DEFAULT_IGNORED_COMMANDS = [
+        'schedule:run',
+        'schedule:finish',
+        'package:discover',
+        'horizon:status',
+        'vendor:publish',
+        'config:cache',
+        'config:clear',
+        'route:cache',
+        'route:clear',
+        'view:cache',
+        'view:clear',
+        'optimize',
+        'optimize:clear',
+        'event:cache',
+        'event:clear',
+        'storage:link',
+        'migrate',
+        'migrate:fresh',
+        'migrate:rollback',
+        'migrate:run',
+        'migrate:status',
+        'db:seed',
+    ];
+
+    /**
      * Verifica se o comando deve ser ignorado.
      *
      * Este método verifica se o comando concluído está na lista de comandos
@@ -65,11 +94,11 @@ class CommandWatcher extends Watcher
      */
     private function shouldIgnore($event): bool
     {
-        return in_array($event->command, array_merge($this->options['ignore'] ?? [], [
-            'schedule:run',
-            'schedule:finish',
-            'package:discover',
-            'horizon:status'
-        ]));
+        $ignoredCommands = array_merge(
+            self::DEFAULT_IGNORED_COMMANDS,
+            $this->options['ignore'] ?? []
+        );
+
+        return in_array($event->command, $ignoredCommands);
     }
 }

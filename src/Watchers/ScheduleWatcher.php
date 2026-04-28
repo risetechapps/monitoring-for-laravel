@@ -44,6 +44,17 @@ class ScheduleWatcher extends Watcher
             }
 
             collect(app(Schedule::class)->events())->each(function ($event) {
+                // Verifica se deve ignorar closures
+                if (($this->options['ignore_closures'] ?? false) && $event instanceof CallbackEvent) {
+                    return;
+                }
+
+                // Verifica se o comando específico deve ser ignorado
+                $ignoredCommands = $this->options['ignore_commands'] ?? [];
+                if (!$event instanceof CallbackEvent && in_array($event->command, $ignoredCommands)) {
+                    return;
+                }
+
                 $event->then(function () use ($event) {
                     Monitoring::recordScheduledCommand(IncomingEntry::make([
                         'command' => $event instanceof CallbackEvent ? 'Closure' : $event->command,

@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\View\View;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Monitoring;
+use RiseTechApps\Monitoring\Services\PerformanceMonitoringService;
 use RiseTechApps\RiseTools\Features\Device\Device;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -75,6 +76,16 @@ class RequestWatcher extends Watcher
             ]);
 
             Monitoring::recordRequest($entry);
+
+            // Registra métricas de performance
+            if (config('monitoring.performance.track_memory_peaks', true)) {
+                $performanceService = app(PerformanceMonitoringService::class);
+                $performanceService->recordRequestMetrics([
+                    'duration' => $entry->content['duration'] ?? 0,
+                    'response_status' => $entry->content['response_status'] ?? 200,
+                    'memory' => $entry->content['memory'] ?? 0,
+                ]);
+            }
         } catch (\Exception $exception) {
             loggly()->to('file')->performedOn(self::class)->exception($exception)->level('error')->log($exception->getMessage());
         }

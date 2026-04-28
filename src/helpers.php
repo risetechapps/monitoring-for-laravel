@@ -71,3 +71,19 @@ if (!function_exists('logglyDebug')) {
         return app(\RiseTechApps\Monitoring\Loggly\Loggly::class)->level(\RiseTechApps\Monitoring\Loggly\Loggly::DEBUG);
     }
 }
+
+if (! function_exists('monitoring')) {
+    /**
+     * Retorna a instância do Monitoring para registrar métricas.
+     *
+     * Exemplos:
+     * monitoring()->gauge('pedidos_pendentes', 42);
+     * monitoring()->increment('checkout_concluido');
+     * monitoring()->histogram('tempo_api', 150);
+     * monitoring()->timer('processamento', fn() => $this->processar());
+     */
+    function monitoring(): \RiseTechApps\Monitoring\Monitoring
+    {
+        return app('monitoring');
+    }
+}

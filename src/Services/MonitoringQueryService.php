@@ -237,6 +237,35 @@ class MonitoringQueryService
     }
 
     /**
+     * Retorna registros para backup em lote por tipo específico.
+     *
+     * @param  string $entryType Tipo de entrada (exception, request, etc.)
+     * @param  int    $retentionDays Dias de retenção
+     * @param  int    $chunkSize Tamanho do lote
+     * @param  bool   $keepUnresolved Manter exceções não resolvidas
+     * @param  callable $callback Função de callback
+     */
+    public function chunkForRetentionByType(
+        string $entryType,
+        int $retentionDays,
+        int $chunkSize,
+        bool $keepUnresolved,
+        callable $callback
+    ): void {
+        $query = $this->query()
+            ->where('type', $entryType)
+            ->where('created_at', '<', Carbon::now()->subDays($retentionDays)->toDateTimeString());
+
+        // Para exceções, opcionalmente mantém não resolvidas
+        if ($keepUnresolved && $entryType === 'exception') {
+            $query->whereNotNull('resolved_at');
+        }
+
+        $query->orderBy('created_at', 'ASC')
+            ->chunk($chunkSize, $callback);
+    }
+
+    /**
      * Query paginada para exportação (sem expansão de batch).
      */
     public function queryForExport(array $filters = []): \Illuminate\Database\Query\Builder

@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
+use RiseTechApps\Monitoring\Services\Alerts\AlertService;
 use RiseTechApps\Monitoring\Traits\Record\Record;
 use Throwable;
 
@@ -173,14 +174,82 @@ class Monitoring
                     ],
                 ],
             ],
-            Watchers\ExceptionWatcher::class    => ['enabled' => true, 'options' => []],
-            Watchers\CommandWatcher::class      => ['enabled' => true, 'options' => []],
-            Watchers\GateWatcher::class         => ['enabled' => true, 'options' => []],
-            Watchers\JobWatcher::class          => ['enabled' => true, 'options' => []],
+            Watchers\ExceptionWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_exceptions' => [],
+                    'ignore_messages_containing' => [],
+                    'ignore_files_containing' => [],
+                ],
+            ],
+            Watchers\CommandWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore' => [],
+                ],
+            ],
+            Watchers\GateWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_abilities' => [],
+                ],
+            ],
+            Watchers\JobWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_namespaces' => [],
+                    'ignore_jobs' => [],
+                ],
+            ],
             Watchers\QueueWatcher::class        => ['enabled' => true, 'options' => []],
-            Watchers\ScheduleWatcher::class     => ['enabled' => true, 'options' => []],
-            Watchers\NotificationWatcher::class => ['enabled' => true, 'options' => []],
-            Watchers\MailWatcher::class         => ['enabled' => true, 'options' => []],
+            Watchers\ScheduleWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_commands' => [],
+                    'ignore_closures' => false,
+                ],
+            ],
+            Watchers\NotificationWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_notifications' => [],
+                    'ignore_channels' => [],
+                    'ignore_anonymous' => false,
+                ],
+            ],
+            Watchers\MailWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_mailables' => [],
+                    'ignore_subjects_containing' => [],
+                    'ignore_from_addresses' => [],
+                    'ignore_to_addresses' => [],
+                ],
+            ],
+            Watchers\ClientRequestWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'ignore_hosts' => [],
+                    'size_limit' => 64,
+                ],
+            ],
+            Watchers\QueryWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'slow_query_threshold_ms' => 100,
+                    'ignore_patterns' => ['information_schema', 'migrations', 'telescope'],
+                    'log_bindings' => true,
+                    'max_sql_length' => 5000,
+                ],
+            ],
+            Watchers\CacheWatcher::class => [
+                'enabled' => true,
+                'options' => [
+                    'track_hits' => true,
+                    'track_misses' => true,
+                    'ignore_keys' => ['config', 'routes', 'telescope'],
+                ],
+            ],
         ];
     }
 
@@ -247,6 +316,9 @@ class Monitoring
 
             self::$buffer[] = $entry;
 
+            // Verifica alertas para eventos críticos
+            static::checkAlerts($entry, $type);
+
             if (count(self::$buffer) >= self::$bufferSize) {
                 static::flushBuffer();
             } elseif (App::runningInConsole()) {
@@ -256,6 +328,19 @@ class Monitoring
             static::writeInternalError('record', $type, $e);
         } finally {
             self::$isRecording = false;
+        }
+    }
+
+    /**
+     * Verifica se deve disparar alertas para a entrada.
+     */
+    protected static function checkAlerts(IncomingEntry $entry, string $type): void
+    {
+        try {
+            $alertService = app(AlertService::class);
+            $alertService->checkAndAlert($entry, $type);
+        } catch (\Throwable $e) {
+            // Silencia erros de alerta para não afetar a aplicação
         }
     }
 
@@ -375,5 +460,118 @@ class Monitoring
     public static function routes($options = []): void
     {
         Routes::register($options);
+    }
+
+    // ---------------------------------------------------------------
+    // Métricas Customizáveis
+    // ---------------------------------------------------------------
+
+    /**
+     * Registra uma métrica do tipo gauge (valor pontual).
+     *
+     * Exemplo: monitoring()->gauge('pedidos_pendentes', 42);
+     */
+    public static function gauge(string $name, float|int $value, array $tags = []): void
+    {
+        if (!static::$enabled) {
+            return;
+        }
+
+        $entry = IncomingEntry::make([
+            'metric_type' => 'gauge',
+            'metric_name' => $name,
+            'value' => $value,
+        ])->tags(array_merge(['metric:gauge', "metric:{$name}"], $tags));
+
+        static::recordMetric($entry);
+    }
+
+    /**
+     * Incrementa uma métrica do tipo counter.
+     *
+     * Exemplo: monitoring()->increment('checkout_concluido');
+     */
+    public static function increment(string $name, int $value = 1, array $tags = []): void
+    {
+        if (!static::$enabled) {
+            return;
+        }
+
+        $entry = IncomingEntry::make([
+            'metric_type' => 'counter',
+            'metric_name' => $name,
+            'value' => $value,
+        ])->tags(array_merge(['metric:counter', "metric:{$name}"], $tags));
+
+        static::recordMetric($entry);
+    }
+
+    /**
+     * Registra uma métrica do tipo histogram (distribuição de valores).
+     *
+     * Exemplo: monitoring()->histogram('tempo_resposta_api', 250);
+     */
+    public static function histogram(string $name, float|int $value, array $tags = []): void
+    {
+        if (!static::$enabled) {
+            return;
+        }
+
+        $entry = IncomingEntry::make([
+            'metric_type' => 'histogram',
+            'metric_name' => $name,
+            'value' => $value,
+        ])->tags(array_merge(['metric:histogram', "metric:{$name}"], $tags));
+
+        static::recordMetric($entry);
+    }
+
+    /**
+     * Mede o tempo de execução de um callable e registra como histogram.
+     *
+     * Exemplo:
+     * monitoring()->timer('processamento_pedido', function() {
+     *     return $this->processarPedido($dados);
+     * });
+     */
+    public static function timer(string $name, callable $callback, array $tags = []): mixed
+    {
+        $start = microtime(true);
+
+        try {
+            $result = $callback();
+        } finally {
+            $duration = (microtime(true) - $start) * 1000; // em ms
+            static::histogram($name, round($duration, 2), $tags);
+        }
+
+        return $result ?? null;
+    }
+
+    /**
+     * Registra uma métrica manualmente no buffer.
+     */
+    protected static function recordMetric(IncomingEntry $entry): void
+    {
+        static::record('metric', $entry);
+    }
+
+    /**
+     * Retorna métricas agregadas por nome e período.
+     * Útil para dashboards.
+     */
+    public static function getMetrics(string $name, string $period = '1 hour'): array
+    {
+        // Este método seria implementado no repository
+        // Por enquanto retorna estrutura vazia
+        return [
+            'name' => $name,
+            'period' => $period,
+            'count' => 0,
+            'avg' => 0,
+            'min' => 0,
+            'max' => 0,
+            'sum' => 0,
+        ];
     }
 }

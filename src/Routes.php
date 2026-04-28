@@ -37,13 +37,26 @@ class Routes
         unset($group['authorize'], $group['rate_limit']);
 
         Route::group($group, function () {
-            Route::get('/',                        [MonitoringController::class, 'index'])->name('index');
-            Route::get('/type/{type}',             [MonitoringController::class, 'types'])->name('type');
-            Route::post('/tags',                   [MonitoringController::class, 'tags'])->name('tags');
-            Route::get('/user/{userId}',           [MonitoringController::class, 'byUser'])->name('user');
-            Route::post('/export',                 [MonitoringController::class, 'export'])->name('export');
+            Route::get('/',                               [MonitoringController::class, 'index'])->name('index');
+            Route::get('/health',                         [MonitoringController::class, 'health'])->name('health');
+            Route::get('/search',                         [MonitoringController::class, 'search'])->name('search');
+            Route::get('/compare',                        [MonitoringController::class, 'compare'])->name('compare');
+            Route::get('/type/{type}',                    [MonitoringController::class, 'types'])->name('type');
+            Route::post('/tags',                          [MonitoringController::class, 'tags'])->name('tags');
+            Route::get('/user/{userId}',                  [MonitoringController::class, 'byUser'])->name('user');
+            Route::post('/export',                        [MonitoringController::class, 'export'])->name('export');
+
+            // Rotas de resolução de exceções
+            Route::get('/exceptions/unresolved',          [MonitoringController::class, 'unresolvedExceptions'])->name('exceptions.unresolved');
+            Route::post('/resolve-exception',             [MonitoringController::class, 'resolveExceptionType'])->name('exceptions.resolve-type');
+            Route::post('/{id}/resolve',                  [MonitoringController::class, 'resolve'])->name('resolve');
+            Route::post('/{id}/unresolve',                [MonitoringController::class, 'unresolve'])->name('unresolve');
+
+            // Timeline por tag
+            Route::get('/timeline/{tag}/{value}',         [MonitoringController::class, 'timeline'])->name('timeline');
+
             // GET /{id} deve vir por último para não conflitar com as rotas acima
-            Route::get('/{id}',                   [MonitoringController::class, 'show'])->name('show');
+            Route::get('/{id}',                           [MonitoringController::class, 'show'])->name('show');
         });
     }
 }

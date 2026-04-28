@@ -22,7 +22,7 @@
         "illuminate/support": "^12.0",
         "aws/aws-sdk-php": "^3.363",
         "hisorange/browser-detect": "^4.5",
-        "risetechapps/risetools": "^1.8.2",
+        "risetechapps/risetools": "^2.0.0",
         "laravel/sanctum": "^4.0"
     },
     "require-dev": {

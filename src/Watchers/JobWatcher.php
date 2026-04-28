@@ -23,7 +23,7 @@ class JobWatcher extends Watcher
      * Namespaces de jobs internos que NUNCA devem ser monitorados.
      * Evita o loop: job de monitoring falha → JobFailed → novo job → falha → ...
      */
-    private const IGNORED_JOB_NAMESPACES = [
+    private const DEFAULT_IGNORED_NAMESPACES = [
         'RiseTechApps\\Monitoring\\',   // todos os jobs deste pacote
         'Laravel\\Telescope\\',          // jobs internos do Telescope
         'Laravel\\Horizon\\',            // jobs internos do Horizon
@@ -206,8 +206,20 @@ class JobWatcher extends Watcher
             return false;
         }
 
-        // Verifica por namespace prefix (mais robusto que comparação exata)
-        foreach (self::IGNORED_JOB_NAMESPACES as $ns) {
+        // Verifica jobs específicos configurados para ignorar
+        $ignoredJobs = $this->options['ignore_jobs'] ?? [];
+        foreach ($ignoredJobs as $ignoredJob) {
+            if ($className === $ignoredJob || is_a($className, $ignoredJob, true)) {
+                return true;
+            }
+        }
+
+        // Verifica por namespace prefix (padrão + configurado)
+        $ignoredNamespaces = array_merge(
+            self::DEFAULT_IGNORED_NAMESPACES,
+            $this->options['ignore_namespaces'] ?? []
+        );
+        foreach ($ignoredNamespaces as $ns) {
             if (str_starts_with($className, $ns)) {
                 return true;
             }

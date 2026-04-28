@@ -20,6 +20,10 @@ class MailWatcher extends Watcher
         try {
             if (! Monitoring::isEnabled()) return;
 
+            if ($this->shouldIgnore($event)) {
+                return;
+            }
+
             $html = $event->message->getBody() instanceof AbstractPart
                 ? ($event->message->getHtmlBody() ?? $event->message->getTextBody())
                 : $event->message->getBody();
@@ -46,6 +50,59 @@ class MailWatcher extends Watcher
         } catch (\Exception $exception) {
             loggly()->to('file')->performedOn(self::class)->exception($exception)->level('error')->log($exception->getMessage());
         }
+    }
+
+    /**
+     * Verifica se o e-mail deve ser ignorado.
+     *
+     * @param  MessageSent  $event O evento de e-mail enviado.
+     * @return bool Retorna true se o e-mail deve ser ignorado.
+     */
+    private function shouldIgnore(MessageSent $event): bool
+    {
+        // Verifica classes Mailable específicas
+        $ignoredMailables = $this->options['ignore_mailables'] ?? [];
+        $mailable = $this->getMailable($event);
+        if ($mailable) {
+            foreach ($ignoredMailables as $ignoredClass) {
+                if ($mailable === $ignoredClass || is_a($mailable, $ignoredClass, true)) {
+                    return true;
+                }
+            }
+        }
+
+        // Verifica assuntos que contêm textos ignorados
+        $ignoredSubjects = $this->options['ignore_subjects_containing'] ?? [];
+        $subject = strtolower($event->message->getSubject() ?? '');
+        foreach ($ignoredSubjects as $ignoredText) {
+            if (str_contains($subject, strtolower($ignoredText))) {
+                return true;
+            }
+        }
+
+        // Verifica remetentes ignorados
+        $ignoredFrom = $this->options['ignore_from_addresses'] ?? [];
+        $from = $event->message->getFrom() ?? [];
+        foreach ($from as $address) {
+            if ($address instanceof Address) {
+                if (in_array($address->getAddress(), $ignoredFrom)) {
+                    return true;
+                }
+            }
+        }
+
+        // Verifica destinatários ignorados
+        $ignoredTo = $this->options['ignore_to_addresses'] ?? [];
+        $to = $event->message->getTo() ?? [];
+        foreach ($to as $address) {
+            if ($address instanceof Address) {
+                if (in_array($address->getAddress(), $ignoredTo)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     protected function getMailable($event): mixed

@@ -147,7 +147,41 @@ class ExceptionWatcher extends Watcher
 
     private function shouldIgnore(MessageLogged $event): bool
     {
-        return !isset($event->context['exception'])
-            || !($event->context['exception'] instanceof Throwable);
+        // Verifica se há uma exceção válida
+        if (!isset($event->context['exception'])
+            || !($event->context['exception'] instanceof Throwable)) {
+            return true;
+        }
+
+        /** @var Throwable $exception */
+        $exception = $event->context['exception'];
+
+        // Verifica se a classe da exceção está na lista de ignorados
+        $ignoredExceptions = $this->options['ignore_exceptions'] ?? [];
+        foreach ($ignoredExceptions as $ignoredClass) {
+            if ($exception instanceof $ignoredClass) {
+                return true;
+            }
+        }
+
+        // Verifica se a mensagem contém textos que devem ser ignorados
+        $ignoredMessages = $this->options['ignore_messages_containing'] ?? [];
+        $message = strtolower($exception->getMessage());
+        foreach ($ignoredMessages as $ignoredText) {
+            if (str_contains($message, strtolower($ignoredText))) {
+                return true;
+            }
+        }
+
+        // Verifica se o arquivo da exceção contém caminhos que devem ser ignorados
+        $ignoredFiles = $this->options['ignore_files_containing'] ?? [];
+        $file = $exception->getFile();
+        foreach ($ignoredFiles as $ignoredPath) {
+            if (str_contains($file, $ignoredPath)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

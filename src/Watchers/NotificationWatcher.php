@@ -43,6 +43,10 @@ class NotificationWatcher extends Watcher
 
             if(!Monitoring::isEnabled()) return;
 
+            if ($this->shouldIgnore($event)) {
+                return;
+            }
+
             $entry = IncomingEntry::make([
                 'notification' => get_class($event->notification),
                 'queued' => in_array(ShouldQueue::class, class_implements($event->notification)),
@@ -56,6 +60,38 @@ class NotificationWatcher extends Watcher
         } catch (\Exception $exception) {
             loggly()->to('file')->performedOn(self::class)->exception($exception)->level('error')->log($exception->getMessage());
         }
+    }
+
+    /**
+     * Verifica se a notificação deve ser ignorada.
+     *
+     * @param  NotificationSent  $event O evento de notificação enviada.
+     * @return bool Retorna true se a notificação deve ser ignorada.
+     */
+    private function shouldIgnore(NotificationSent $event): bool
+    {
+        $notificationClass = get_class($event->notification);
+
+        // Verifica classes de notificação específicas
+        $ignoredNotifications = $this->options['ignore_notifications'] ?? [];
+        foreach ($ignoredNotifications as $ignoredClass) {
+            if ($notificationClass === $ignoredClass || is_a($notificationClass, $ignoredClass, true)) {
+                return true;
+            }
+        }
+
+        // Verifica canais que devem ser ignorados
+        $ignoredChannels = $this->options['ignore_channels'] ?? [];
+        if (in_array($event->channel, $ignoredChannels)) {
+            return true;
+        }
+
+        // Verifica notificações anônimas
+        if (($this->options['ignore_anonymous'] ?? false) && $event->notifiable instanceof AnonymousNotifiable) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

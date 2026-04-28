@@ -74,4 +74,14 @@ trait Record
     {
         static::record(EntryType::LOG, $entry);
     }
+
+    public static function recordMetric(IncomingEntry $entry): void
+    {
+        static::record(EntryType::METRIC, $entry);
+    }
+
+    public static function recordCache(IncomingEntry $entry): void
+    {
+        static::record(EntryType::CACHE, $entry);
+    }
 }

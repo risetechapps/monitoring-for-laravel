@@ -13,7 +13,9 @@ use Monolog\Handler\StreamHandler;
 use Monolog\Logger;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringDiagnoseCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringExportCommand;
+use RiseTechApps\Monitoring\Console\Commands\MonitoringReportCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringRetentionCommand;
+use RiseTechApps\Monitoring\Console\Commands\MonitoringTestWatchersCommand;
 use RiseTechApps\Monitoring\Http\Middleware\DisableMonitoringMiddleware;
 use RiseTechApps\Monitoring\Loggly\Loggly;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
@@ -22,6 +24,8 @@ use RiseTechApps\Monitoring\Repository\MonitoringRepositorySingle;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 use RiseTechApps\Monitoring\Services\ExportService;
 use RiseTechApps\Monitoring\Services\MonitoringQueryService;
+use RiseTechApps\Monitoring\Services\Alerts\AlertService;
+use RiseTechApps\Monitoring\Services\Reporting\ReportService;
 use RiseTechApps\Monitoring\Services\RetentionService;
 use RiseTechApps\RiseTools\Features\Device\Device;
 
@@ -68,6 +72,7 @@ class MonitoringServiceProvider extends ServiceProvider
         $router->aliasMiddleware('monitoring.disable', DisableMonitoringMiddleware::class);
 
         $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
+        $this->loadViewsFrom(__DIR__ . '/../resources/views', 'monitoring');
 
         if ($this->app->runningInConsole()) {
             $this->publishes([
@@ -79,6 +84,8 @@ class MonitoringServiceProvider extends ServiceProvider
                 MonitoringRetentionCommand::class,
                 MonitoringExportCommand::class,
                 MonitoringDiagnoseCommand::class,
+                MonitoringReportCommand::class,
+                MonitoringTestWatchersCommand::class,
             ]);
 
             if ($this->isIgnoredArtisanCommand()) {
@@ -104,6 +111,43 @@ class MonitoringServiceProvider extends ServiceProvider
                 ->withoutOverlapping()
                 ->runInBackground()
                 ->appendOutputTo(storage_path('logs/monitoring-retention.log'));
+            }
+
+            // Agendamento automático de relatórios
+            if (config('monitoring.reports.auto_schedule', false)) {
+                $timezone = config('monitoring.reports.timezone', 'America/Sao_Paulo');
+
+                // Relatório diário
+                if (config('monitoring.reports.daily.enabled', true)) {
+                    $schedule->command('monitoring:report daily --send')
+                        ->dailyAt(config('monitoring.reports.daily.send_at', '08:00'))
+                        ->timezone($timezone)
+                        ->withoutOverlapping()
+                        ->runInBackground();
+                }
+
+                // Relatório semanal
+                if (config('monitoring.reports.weekly.enabled', true)) {
+                    $day = config('monitoring.reports.weekly.day', 'monday');
+                    $schedule->command('monitoring:report weekly --send')
+                        ->weeklyOn(match($day) {
+                            'monday' => 1, 'tuesday' => 2, 'wednesday' => 3,
+                            'thursday' => 4, 'friday' => 5, 'saturday' => 6, 'sunday' => 0,
+                            default => 1,
+                        }, config('monitoring.reports.weekly.send_at', '08:00'))
+                        ->timezone($timezone)
+                        ->withoutOverlapping()
+                        ->runInBackground();
+                }
+
+                // Relatório mensal
+                if (config('monitoring.reports.monthly.enabled', true)) {
+                    $schedule->command('monitoring:report monthly --send')
+                        ->monthlyOn(1, config('monitoring.reports.monthly.send_at', '08:00'))
+                        ->timezone($timezone)
+                        ->withoutOverlapping()
+                        ->runInBackground();
+                }
             }
         });
 
@@ -161,6 +205,16 @@ class MonitoringServiceProvider extends ServiceProvider
         // ExportService
         $this->app->bind(ExportService::class, function ($app) {
             return new ExportService($app->make(MonitoringQueryService::class));
+        });
+
+        // AlertService
+        $this->app->singleton(AlertService::class, function ($app) {
+            return new AlertService();
+        });
+
+        // ReportService
+        $this->app->singleton(ReportService::class, function ($app) {
+            return new ReportService($app->make(MonitoringRepositoryInterface::class));
         });
 
         $this->app->singleton('monitoring', function () {

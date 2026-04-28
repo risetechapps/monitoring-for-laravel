@@ -18,12 +18,14 @@ use RiseTechApps\Monitoring\Services\RetentionService;
 class MonitoringRetentionCommand extends Command
 {
     protected $signature = 'monitoring:retention
-                            {--days=90         : Número de dias de retenção (padrão: 90)}
+                            {--days=90         : Número de dias de retenção padrão}
                             {--format=json     : Formato do backup — json ou csv}
                             {--disk=local      : Disco do Storage para o backup}
                             {--chunk=500       : Registros processados por lote}
                             {--dry-run         : Simula a execução sem gravar ou remover nada}
-                            {--force           : Executa sem pedir confirmação (recomendado no scheduler)}';
+                            {--force           : Executa sem pedir confirmação (recomendado no scheduler)}
+                            {--granular        : Usa políticas granulares por tipo}
+                            {--keep-unresolved : Mantém exceções não resolvidas}';
 
     protected $description = 'Exporta logs antigos para o Storage e os remove do banco (política de retenção)';
 
@@ -34,12 +36,14 @@ class MonitoringRetentionCommand extends Command
 
     public function handle(): int
     {
-        $days      = (int)  $this->option('days');
-        $format    = (string) $this->option('format');
-        $disk      = (string) $this->option('disk');
-        $chunk     = (int)  $this->option('chunk');
-        $dryRun    = (bool) $this->option('dry-run');
-        $force     = (bool) $this->option('force');
+        $days           = (int)  $this->option('days');
+        $format         = (string) $this->option('format');
+        $disk           = (string) $this->option('disk');
+        $chunk          = (int)  $this->option('chunk');
+        $dryRun         = (bool) $this->option('dry-run');
+        $force          = (bool) $this->option('force');
+        $granular       = (bool) $this->option('granular');
+        $keepUnresolved = (bool) $this->option('keep-unresolved');
 
         // Validações
         if (!in_array($format, ['json', 'csv'], true)) {
@@ -58,14 +62,28 @@ class MonitoringRetentionCommand extends Command
         $this->line("<fg=cyan>└─────────────────────────────────────────┘</>");
         $this->newLine();
 
+        // Mostra políticas granulares se ativado
+        if ($granular) {
+            $this->info('Políticas granulares ativas:');
+            $granularConfig = config('monitoring.retention.granular', []);
+            $rows = [];
+            foreach ($granularConfig as $type => $retention) {
+                $rows[] = [$type, "{$retention} dias"];
+            }
+            $this->table(['Tipo', 'Retenção'], $rows);
+            $this->newLine();
+        }
+
         $this->table(
             ['Parâmetro', 'Valor'],
             [
-                ['Dias de retenção',    $days],
-                ['Formato de backup',   strtoupper($format)],
-                ['Disco (Storage)',     $disk],
+                ['Dias padrão',         $days],
+                ['Formato',             strtoupper($format)],
+                ['Disco',               $disk],
                 ['Registros por lote', $chunk],
-                ['Modo dry-run',       $dryRun ? 'SIM' : 'NÃO'],
+                ['Política granular',  $granular ? 'SIM' : 'NÃO'],
+                ['Manter não resolvidas', $keepUnresolved ? 'SIM' : 'NÃO'],
+                ['Modo dry-run',        $dryRun ? 'SIM' : 'NÃO'],
             ]
         );
 
@@ -74,8 +92,8 @@ class MonitoringRetentionCommand extends Command
             $this->newLine();
         }
 
-        // Confirmação interativa (skip se --force ou dry-run)
-        if (!$dryRun && !$force && !$this->confirm("Continuar com a retenção dos logs com mais de {$days} dias?")) {
+        // Confirmação interativa
+        if (!$dryRun && !$force && !$this->confirm("Continuar com a retenção?")) {
             $this->line('Operação cancelada pelo usuário.');
             return self::SUCCESS;
         }
@@ -89,19 +107,13 @@ class MonitoringRetentionCommand extends Command
         $this->info('Iniciando exportação e remoção dos logs antigos...');
         $this->newLine();
 
-        $bar = $this->output->createProgressBar();
-        $bar->setFormat(' %current% registros processados [%bar%] %elapsed:6s%');
-        $bar->start();
-
         $stats = $this->retentionService->run(
             retentionDays: $days,
             format: $format,
             disk: $disk,
-            chunkSize: $chunk
+            chunkSize: $chunk,
+            keepUnresolved: $keepUnresolved
         );
-
-        $bar->finish();
-        $this->newLine(2);
 
         // Resultado
         $this->info('✔  Retenção concluída.');
@@ -114,6 +126,21 @@ class MonitoringRetentionCommand extends Command
                 ['Erros',                count($stats['errors'])],
             ]
         );
+
+        // Mostra detalhes por tipo se granular
+        if ($granular && !empty($stats['by_type'])) {
+            $this->newLine();
+            $this->info('Detalhes por tipo:');
+            $typeRows = [];
+            foreach ($stats['by_type'] as $type => $typeStats) {
+                $typeRows[] = [
+                    $type,
+                    number_format($typeStats['exported']),
+                    number_format($typeStats['deleted']),
+                ];
+            }
+            $this->table(['Tipo', 'Exportados', 'Removidos'], $typeRows);
+        }
 
         if (!empty($stats['files'])) {
             $this->newLine();
