@@ -108,7 +108,7 @@ class ReportService
      */
     public function generate(string $period, ?Carbon $date = null): array
     {
-        $date = $date ?? now();
+        $date ??= now();
 
         $range = $this->getDateRange($period, $date);
 
