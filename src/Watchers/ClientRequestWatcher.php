@@ -19,8 +19,8 @@ class ClientRequestWatcher extends Watcher
 
     public function register($app): void
     {
-        $app['events']->listen(ConnectionFailed::class, [$this, 'recordFailedRequest']);
-        $app['events']->listen(ResponseReceived::class, [$this, 'recordResponse']);
+        $app['events']->listen(ConnectionFailed::class, $this->recordFailedRequest(...));
+        $app['events']->listen(ResponseReceived::class, $this->recordResponse(...));
     }
 
     /**
@@ -70,7 +70,7 @@ class ClientRequestWatcher extends Watcher
             ]);
 
             Monitoring::recordClientRequest($entry);
-        } catch (\Exception $exception) {
+        } catch (\Exception) {
 
         }
     }
@@ -121,15 +121,24 @@ class ClientRequestWatcher extends Watcher
         $stream->rewind();
 
         if (is_string($content)) {
-            if (is_array(json_decode($content, true)) &&
-                json_last_error() === JSON_ERROR_NONE) {
-                return $this->contentWithinLimits($content)
-                    ? $this->hideParameters(json_decode($content, true), Monitoring::$hiddenResponseParameters)
-                    : 'Purged By Telescope';
+            // O limite de tamanho é checado ANTES de qualquer json_decode.
+            // Decodificar primeiro materializa a resposta inteira como array PHP
+            // (várias vezes o tamanho da string) só para descartá-la em seguida.
+            // A maior resposta de API externa vira o pico de memória do request.
+            if (!$this->contentWithinLimits($content)) {
+                return 'Purged By Monitoring';
             }
 
+            $decoded = json_decode($content, true);
+
+            if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                return $this->hideParameters($decoded, Monitoring::$hiddenResponseParameters);
+            }
+
+            unset($decoded);
+
             if (Str::startsWith(strtolower($response->header('Content-Type') ?? ''), 'text/plain')) {
-                return $this->contentWithinLimits($content) ? $content : 'Purged By Telescope';
+                return $content;
             }
         }
 
@@ -153,9 +162,7 @@ class ClientRequestWatcher extends Watcher
      */
     protected function headers($headers)
     {
-        $headerNames = collect($headers)->keys()->map(function ($headerName) {
-            return strtolower($headerName);
-        })->toArray();
+        $headerNames = collect($headers)->keys()->map(fn($headerName) => strtolower((string) $headerName))->toArray();
 
         $headerValues = collect($headers)
             ->map(fn($header) => implode(', ', $header))

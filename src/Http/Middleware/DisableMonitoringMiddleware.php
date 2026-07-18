@@ -14,7 +14,7 @@ class DisableMonitoringMiddleware
         try{
             app(Monitoring::class)->disable();
             return $next($request);
-        }catch (\Exception $e){
+        }catch (\Exception){
             return $next($request);
         }
 

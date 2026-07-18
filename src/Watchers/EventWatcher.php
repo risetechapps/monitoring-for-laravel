@@ -22,7 +22,7 @@ class EventWatcher extends Watcher
      * de negócio. Se um evento só tem listeners desses namespaces, ele já está
      * sendo coberto pela própria ferramenta — não precisamos duplicar.
      */
-    private const INTERNAL_LISTENER_NAMESPACES = [
+    private const array INTERNAL_LISTENER_NAMESPACES = [
         'Laravel\\Telescope\\',
         'Laravel\\Horizon\\',
         'Illuminate\\Foundation\\Testing\\',
@@ -32,7 +32,7 @@ class EventWatcher extends Watcher
 
     public function register($app): void
     {
-        $app['events']->listen('*', [$this, 'recordEvent']);
+        $app['events']->listen('*', $this->recordEvent(...));
     }
 
     public function recordEvent($eventName, $payload): void
@@ -77,11 +77,11 @@ class EventWatcher extends Watcher
             // Serialização segura com limite de tamanho
             $json = json_encode($value, JSON_PARTIAL_OUTPUT_ON_ERROR);
             if ($json && strlen($json) > 16384) {
-                return ['class' => get_class($value), '_purged' => 'Object too large'];
+                return ['class' => $value::class, '_purged' => 'Object too large'];
             }
 
             return [
-                'class'      => get_class($value),
+                'class'      => $value::class,
                 'properties' => json_decode($json ?: '{}', true),
             ];
         })->toArray();
@@ -92,7 +92,7 @@ class EventWatcher extends Watcher
         try {
             return collect(app('events')->getListeners($eventName))
                 ->map(function ($listener) {
-                    $listener = (new ReflectionFunction($listener))
+                    $listener = new ReflectionFunction($listener)
                         ->getStaticVariables()['listener'];
 
                     if (is_string($listener)) {
@@ -100,13 +100,11 @@ class EventWatcher extends Watcher
                     } elseif (is_array($listener) && is_string($listener[0])) {
                         return $listener[0] . '@' . $listener[1];
                     } elseif (is_array($listener) && is_object($listener[0])) {
-                        return get_class($listener[0]) . '@' . $listener[1];
+                        return $listener[0]::class . '@' . $listener[1];
                     }
 
                     return $this->formatClosureListener($listener);
-                })->reject(function ($listener) {
-                    return Str::contains($listener, 'RiseTechApps\\Monitoring');
-                })->map(function ($listener) {
+                })->reject(fn($listener) => Str::contains($listener, 'RiseTechApps\\Monitoring'))->map(function ($listener) {
                     $queued = false;
                     if (Str::contains($listener, '@')) {
                         $queued = in_array(ShouldQueue::class, class_implements(explode('@', $listener)[0]) ?: []);
@@ -177,7 +175,7 @@ class EventWatcher extends Watcher
                 $resolved = null;
 
                 try {
-                    $resolved = (new ReflectionFunction($rawListener))
+                    $resolved = new ReflectionFunction($rawListener)
                         ->getStaticVariables()['listener'] ?? null;
                 } catch (\Throwable) {
                     // Se não consegue inspecionar, considera listener de negócio.
@@ -187,7 +185,7 @@ class EventWatcher extends Watcher
                 $listenerClass = match (true) {
                     is_string($resolved)                              => explode('@', $resolved)[0],
                     is_array($resolved) && is_string($resolved[0])   => $resolved[0],
-                    is_array($resolved) && is_object($resolved[0])   => get_class($resolved[0]),
+                    is_array($resolved) && is_object($resolved[0])   => $resolved[0]::class,
                     default                                           => null,
                 };
 
@@ -196,13 +194,7 @@ class EventWatcher extends Watcher
                     return false;
                 }
 
-                $isInternal = false;
-                foreach (self::INTERNAL_LISTENER_NAMESPACES as $ns) {
-                    if (str_starts_with($listenerClass, $ns)) {
-                        $isInternal = true;
-                        break;
-                    }
-                }
+                $isInternal = array_any(self::INTERNAL_LISTENER_NAMESPACES, fn($ns) => str_starts_with($listenerClass, (string) $ns));
 
                 if (! $isInternal) {
                     // Ao menos um listener é de negócio — deve monitorar.

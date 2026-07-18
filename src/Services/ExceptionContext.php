@@ -22,10 +22,10 @@ use Throwable;
 class ExceptionContext
 {
     /** Número de linhas de contexto antes e depois da linha da exceção */
-    private const CONTEXT_LINES = 10;
+    private const int CONTEXT_LINES = 10;
 
     /** Tamanho máximo de cada linha de contexto (evita linhas minificadas enormes) */
-    private const MAX_LINE_LENGTH = 200;
+    private const int MAX_LINE_LENGTH = 200;
 
     public static function get(Throwable $exception): array
     {
