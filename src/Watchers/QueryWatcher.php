@@ -11,12 +11,15 @@ use RiseTechApps\Monitoring\Monitoring;
 
 class QueryWatcher extends Watcher
 {
+    /** Tabela onde o próprio pacote grava — espelha MonitoringRepository::$table */
+    private const string TABLE = 'monitoring';
+
     /**
      * Registra o ouvinte para eventos de query executada.
      */
     public function register($app): void
     {
-        $app['events']->listen(QueryExecuted::class, [$this, 'recordQuery']);
+        $app['events']->listen(QueryExecuted::class, $this->recordQuery(...));
     }
 
     /**
@@ -26,6 +29,16 @@ class QueryWatcher extends Watcher
     {
         try {
             if (!Monitoring::isEnabled()) {
+                return;
+            }
+
+            // Nunca monitorar as próprias escritas do monitoring.
+            //
+            // flushBuffer() insere na tabela `monitoring`, e quando o flush parte
+            // do terminating()/shutdown ele roda FORA do record() — o circuit
+            // breaker $isRecording está desligado. Um INSERT lento viraria uma
+            // entrada nova depois do flush, que o shutdown flusharia de novo.
+            if ($this->isMonitoringQuery($event)) {
                 return;
             }
 
@@ -75,6 +88,31 @@ class QueryWatcher extends Watcher
     }
 
     /**
+     * Verifica se a query pertence ao próprio sistema de monitoramento.
+     *
+     * Casa com a tabela `monitoring` como alvo de from/into/update/join, e não
+     * com qualquer ocorrência da palavra: `user_monitoring_settings` e a coluna
+     * `monitoring_enabled` são de negócio e precisam continuar sendo monitoradas.
+     */
+    private function isMonitoringQuery(QueryExecuted $event): bool
+    {
+        $connection = config('monitoring.drivers.database.connection', config('database.default'));
+
+        if ($event->connectionName !== $connection) {
+            return false;
+        }
+
+        // Remove os delimitadores de identificador para cobrir os vários drivers
+        // ("monitoring" no pgsql, `monitoring` no mysql, [monitoring] no sqlsrv).
+        $sql = str_replace(['"', '`', '[', ']'], '', strtolower((string) $event->sql));
+
+        return (bool) preg_match(
+            '/\b(?:from|into|update|join)\s+' . preg_quote(self::TABLE, '/') . '\b/',
+            $sql
+        );
+    }
+
+    /**
      * Verifica se a query deve ser ignorada baseado nos padrões configurados.
      */
     private function shouldIgnore(QueryExecuted $event): bool
@@ -83,7 +121,7 @@ class QueryWatcher extends Watcher
         $sql = strtolower($event->sql);
 
         foreach ($ignorePatterns as $pattern) {
-            if (str_contains($sql, strtolower($pattern))) {
+            if (str_contains($sql, strtolower((string) $pattern))) {
                 return true;
             }
         }

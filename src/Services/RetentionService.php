@@ -21,46 +21,65 @@ use RiseTechApps\Monitoring\Entry\EntryType;
  */
 class RetentionService
 {
-    private const DATE_FORMAT = 'Y-m-d';
+    private const string DATE_FORMAT = 'Y-m-d';
 
-    /** Mapeamento de tipos para configuração granular */
-    private const TYPE_MAPPING = [
+    /**
+     * Mapeamento de tipos para configuração granular.
+     *
+     * Precisa cobrir TODOS os valores de EntryType: run() itera este mapa, então
+     * qualquer tipo ausente nunca é podado e cresce para sempre no banco.
+     * Ao adicionar um EntryType novo, adicione a entrada correspondente aqui e a
+     * chave equivalente em config/config.php → retention.granular.
+     */
+    private const array TYPE_MAPPING = [
         EntryType::EXCEPTION => 'exceptions',
-        EntryType::REQUEST   => 'requests',
-        EntryType::JOB       => 'jobs',
-        EntryType::QUERY     => 'queries',
-        EntryType::CACHE     => 'cache',
-        EntryType::METRIC    => 'metrics',
+        EntryType::REQUEST => 'requests',
+        EntryType::JOB => 'jobs',
+        EntryType::QUERY => 'queries',
+        EntryType::CACHE => 'cache',
+        EntryType::METRIC => 'metrics',
+        EntryType::EVENT => 'events',
+        EntryType::LOG => 'logs',
+        EntryType::MODEL => 'models',
+        EntryType::MAIL => 'mails',
+        EntryType::NOTIFICATION => 'notifications',
+        EntryType::GATE => 'gates',
+        EntryType::COMMAND => 'commands',
+        EntryType::SCHEDULED_TASK => 'schedules',
+        EntryType::CLIENT_REQUEST => 'client_requests',
     ];
 
     public function __construct(
         private readonly MonitoringQueryService $queryService
-    ) {}
+    )
+    {
+    }
 
     /**
      * Executa o ciclo completo de retenção com políticas granulares.
      *
-     * @param  int    $retentionDays  Padrão global (fallback)
-     * @param  string $format         'json' ou 'csv'
-     * @param  string $disk           disco do Storage (config)
-     * @param  int    $chunkSize      Registros por lote
-     * @param  bool   $keepUnresolved Manter exceções não resolvidas
+     * @param int $retentionDays Padrão global (fallback)
+     * @param string $format 'json' ou 'csv'
+     * @param string $disk disco do Storage (config)
+     * @param int $chunkSize Registros por lote
+     * @param bool $keepUnresolved Manter exceções não resolvidas
      *
      * @return array{exported: int, deleted: int, files: list<string>, errors: list<string>, by_type: array}
      */
     public function run(
-        int $retentionDays = 90,
+        int    $retentionDays = 90,
         string $format = 'json',
         string $disk = 'local',
-        int $chunkSize = 500,
-        bool $keepUnresolved = true
-    ): array {
+        int    $chunkSize = 500,
+        bool   $keepUnresolved = true
+    ): array
+    {
         $stats = [
-            'exported'   => 0,
-            'deleted'    => 0,
-            'files'      => [],
-            'errors'     => [],
-            'by_type'    => [],
+            'exported' => 0,
+            'deleted' => 0,
+            'files' => [],
+            'errors' => [],
+            'by_type' => [],
         ];
 
         // Obtém políticas granulares
@@ -94,22 +113,23 @@ class RetentionService
      */
     private function processType(
         string $entryType,
-        int $days,
+        int    $days,
         string $format,
         string $disk,
-        int $chunkSize,
-        bool $keepUnresolved
-    ): array {
+        int    $chunkSize,
+        bool   $keepUnresolved
+    ): array
+    {
         $stats = [
             'exported' => 0,
-            'deleted'  => 0,
-            'files'    => [],
-            'errors'   => [],
+            'deleted' => 0,
+            'files' => [],
+            'errors' => [],
         ];
 
-        $cutoff     = Carbon::now()->subDays($days);
-        $dateLabel  = $cutoff->format(self::DATE_FORMAT);
-        $runLabel   = Carbon::now()->format('Ymd_His');
+        $cutoff = Carbon::now()->subDays($days);
+        $dateLabel = $cutoff->format(self::DATE_FORMAT);
+        $runLabel = Carbon::now()->format('Ymd_His');
         $batchIndex = 0;
 
         $this->queryService->chunkForRetentionByType(
@@ -138,16 +158,16 @@ class RetentionService
                         return;
                     }
 
-                    $stats['files'][]   = $filename;
+                    $stats['files'][] = $filename;
                     $stats['exported'] += count($ids);
 
                 } catch (\Throwable $e) {
                     $stats['errors'][] = "Erro no lote {$batchIndex}: {$e->getMessage()}";
                     Log::error('[Monitoring Retention] Erro ao exportar lote', [
-                        'batch'     => $batchIndex,
-                        'type'      => $entryType,
-                        'error'     => $e->getMessage(),
-                        'filename'  => $filename,
+                        'batch' => $batchIndex,
+                        'type' => $entryType,
+                        'error' => $e->getMessage(),
+                        'filename' => $filename,
                     ]);
                     return;
                 }
@@ -160,8 +180,8 @@ class RetentionService
                     $stats['errors'][] = "Erro ao remover lote {$batchIndex} do banco: {$e->getMessage()}";
                     Log::error('[Monitoring Retention] Erro ao remover lote do banco', [
                         'batch' => $batchIndex,
-                        'type'  => $entryType,
-                        'ids'   => $ids,
+                        'type' => $entryType,
+                        'ids' => $ids,
                         'error' => $e->getMessage(),
                     ]);
                 }
@@ -173,15 +193,15 @@ class RetentionService
 
     /**
      * Executa retenção padrão (compatibilidade com versão anterior).
-     *
-     * @deprecated Use run() com configuração granular
      */
+    #[\Deprecated(message: 'Use run() com configuração granular')]
     public function runLegacy(
-        int $retentionDays = 90,
+        int    $retentionDays = 90,
         string $format = 'json',
         string $disk = 'local',
-        int $chunkSize = 500
-    ): array {
+        int    $chunkSize = 500
+    ): array
+    {
         return $this->run($retentionDays, $format, $disk, $chunkSize, true);
     }
 
@@ -191,7 +211,7 @@ class RetentionService
 
     private function toJson(Collection $rows): string
     {
-        $data = $rows->map(fn ($r) => (array) $r)->toArray();
+        $data = $rows->map(fn($r) => (array)$r)->toArray();
         return json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     }
 
@@ -201,16 +221,16 @@ class RetentionService
             return '';
         }
 
-        $output  = fopen('php://temp', 'r+b');
-        $headers = array_keys((array) $rows->first());
-        fputcsv($output, $headers);
+        $output = fopen('php://temp', 'r+b');
+        $headers = array_keys((array)$rows->first());
+        fputcsv($output, $headers, escape: '\\');
 
         foreach ($rows as $row) {
             $values = array_map(
-                fn ($v) => is_array($v) || is_object($v) ? json_encode($v) : $v,
-                (array) $row
+                fn($v) => is_array($v) || is_object($v) ? json_encode($v) : $v,
+                (array)$row
             );
-            fputcsv($output, $values);
+            fputcsv($output, $values, escape: '\\');
         }
 
         rewind($output);

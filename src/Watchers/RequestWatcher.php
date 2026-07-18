@@ -28,7 +28,7 @@ class RequestWatcher extends Watcher
      */
     public function register($app): void
     {
-        $app['events']->listen(RequestHandled::class, [$this, 'recordRequest']);
+        $app['events']->listen(RequestHandled::class, $this->recordRequest(...));
     }
 
     /**
@@ -101,7 +101,7 @@ class RequestWatcher extends Watcher
     {
         return in_array(
             strtolower($event->request->method()),
-            collect($this->options['ignore_http_methods'] ?? [])->map(fn($method) => strtolower($method))->all()
+            collect($this->options['ignore_http_methods'] ?? [])->map(fn($method) => strtolower((string) $method))->all()
         );
     }
 
@@ -122,16 +122,24 @@ class RequestWatcher extends Watcher
     /**
      * Verifica se o path da url deve ser ignorado.
      *
-     * @param RequestHandled $event O evento que contém os detalhes da resposta.
-     * @return bool Retorna true se o código de status deve ser ignorado; caso contrário, false.
+     * Os padrões são glob (`telescope*`), não substring.
+     *
+     * A versão anterior usava Str::contains: o padrão `up`, presente na
+     * configuração padrão para excluir o health check do Laravel, casava com
+     * qualquer rota que contivesse "up" — `/api/upload`, `/signup`, `/support`,
+     * `/groups` — e essas rotas deixavam de ser monitoradas em silêncio.
+     *
+     * @param RequestHandled $event O evento que contém os detalhes da requisição.
      */
     private function shouldIgnorePaths($event): bool
     {
-        $path = $event->request->path();
+        $patterns = $this->options['ignore_paths'] ?? [];
 
-        return collect($this->options['ignore_paths'])->contains(function ($part) use ($path) {
-            return Str::contains($path, $part);
-        });
+        if (empty($patterns)) {
+            return false;
+        }
+
+        return $event->request->is(...$patterns);
     }
 
     /**
@@ -199,20 +207,8 @@ class RequestWatcher extends Watcher
      */
     protected function response(Response $response): array|string
     {
-        $content = $response->getContent();
-
-        if (is_string($content)) {
-            if (is_array(json_decode($content, true)) && json_last_error() === JSON_ERROR_NONE) {
-                return $this->contentWithinLimits($content)
-                    ? $this->hideParameters(json_decode($content, true), [])
-                    : 'Purged By Monitoring';
-            }
-
-            if (Str::startsWith(strtolower($response->headers->get('Content-Type') ?? ''), 'text/plain')) {
-                return $this->contentWithinLimits($content) ? $content : 'Purged By Monitoring';
-            }
-        }
-
+        // Respostas que já se resumem a um rótulo são resolvidas antes de olhar
+        // o corpo — não há motivo para medir ou decodificar o que será descartado.
         if ($response instanceof RedirectResponse) {
             return 'Redirected to ' . $response->getTargetUrl();
         }
@@ -221,8 +217,32 @@ class RequestWatcher extends Watcher
             return ['Instance to View'];
         }
 
-        if (is_string($content) && empty($content)) {
-            return 'Empty Response';
+        $content = $response->getContent();
+
+        if (is_string($content)) {
+            if ($content === '') {
+                return 'Empty Response';
+            }
+
+            // O limite de tamanho é checado ANTES de qualquer json_decode.
+            // Decodificar primeiro materializa a resposta inteira como array PHP
+            // (várias vezes o tamanho da string) só para descartá-la em seguida —
+            // um pico de memória proporcional à maior resposta da aplicação.
+            if (!$this->contentWithinLimits($content)) {
+                return 'Purged By Monitoring';
+            }
+
+            $decoded = json_decode($content, true);
+
+            if (is_array($decoded) && json_last_error() === JSON_ERROR_NONE) {
+                return $this->hideParameters($decoded, $this->hiddenResponseParameters());
+            }
+
+            unset($decoded);
+
+            if (Str::startsWith(strtolower($response->headers->get('Content-Type') ?? ''), 'text/plain')) {
+                return $content;
+            }
         }
 
         return 'HTML Response';
@@ -257,6 +277,24 @@ class RequestWatcher extends Watcher
         }
 
         return $data;
+    }
+
+    /**
+     * Parâmetros a redigir do corpo da resposta antes de gravar no monitoring.
+     *
+     * Antes a resposta era gravada CRUA (lista vazia): um corpo com token/secret
+     * (ex.: resposta de login com access_token) ficava exposto na tabela de
+     * monitoramento. A lista vem de config('monitoring.hidden_response_parameters')
+     * + do registro estático Monitoring::$hiddenResponseParameters, e suporta
+     * dot-notation (ex.: 'data.token', 'data.access_token'). Vazio = comportamento
+     * anterior (nada redigido) — retrocompatível.
+     */
+    protected function hiddenResponseParameters(): array
+    {
+        return array_values(array_unique(array_merge(
+            (array) config('monitoring.hidden_response_parameters', []),
+            Monitoring::$hiddenResponseParameters,
+        )));
     }
 
 }

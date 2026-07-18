@@ -16,27 +16,6 @@ namespace RiseTechApps\Monitoring\Events;
 class ReportGenerated
 {
     /**
-     * Dados completos do relatório.
-     *
-     * @var array
-     */
-    public array $report;
-
-    /**
-     * HTML renderizado do relatório.
-     *
-     * @var string
-     */
-    public string $html;
-
-    /**
-     * Canais solicitados para envio.
-     *
-     * @var array
-     */
-    public array $channels;
-
-    /**
      * Indica se o relatório foi processado (evita duplicidade).
      *
      * @var bool
@@ -50,11 +29,9 @@ class ReportGenerated
      */
     public bool $suppressDefault = false;
 
-    public function __construct(array $report, string $html, array $channels = ['email'])
+    public function __construct(public array $report, public string $html, public array $channels = ['email']
+    )
     {
-        $this->report = $report;
-        $this->html = $html;
-        $this->channels = $channels;
     }
 
     /**

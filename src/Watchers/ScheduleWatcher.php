@@ -21,7 +21,7 @@ class ScheduleWatcher extends Watcher
      */
     public function register($app): void
     {
-        $app['events']->listen(CommandStarting::class, [$this, 'recordCommand']);
+        $app['events']->listen(CommandStarting::class, $this->recordCommand(...));
     }
 
     /**
