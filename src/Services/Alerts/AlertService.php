@@ -5,11 +5,10 @@ declare(strict_types=1);
 namespace RiseTechApps\Monitoring\Services\Alerts;
 
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Mail;
 use RiseTechApps\Monitoring\Contracts\AlertHandlerInterface;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Events\AlertTriggered;
+use RiseTechApps\Monitoring\Jobs\SendMonitoringAlertJob;
 
 class AlertService
 {
@@ -224,74 +223,14 @@ class AlertService
     }
 
     /**
-     * Envia mensagem para todos os canais configurados.
+     * Enfileira o envio das notificações (Slack/Discord/Email) para FORA da
+     * request. Antes, os 2 POST de webhook + o e-mail iam de forma síncrona
+     * dentro da requisição que gerou o alerta — atrasando o envio da resposta
+     * (e piorando justamente uma "requisição lenta"). O I/O real vive em
+     * SendMonitoringAlertJob, executado no worker.
      */
     private function sendToAllChannels(string $message, string $subject): void
     {
-        $this->sendSlack($message);
-        $this->sendDiscord($message);
-        $this->sendEmail($message, $subject);
-    }
-
-    /**
-     * Envia para Slack via webhook.
-     */
-    private function sendSlack(string $message): void
-    {
-        $webhook = config('monitoring.alerts.slack_webhook');
-        if (!$webhook) {
-            return;
-        }
-
-        try {
-            Http::post($webhook, [
-                'text' => $message,
-                'username' => 'Monitoring Alerts',
-                'icon_emoji' => ':warning:',
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('Falha ao enviar alerta Slack', ['error' => $e->getMessage()]);
-        }
-    }
-
-    /**
-     * Envia para Discord via webhook.
-     */
-    private function sendDiscord(string $message): void
-    {
-        $webhook = config('monitoring.alerts.discord_webhook');
-        if (!$webhook) {
-            return;
-        }
-
-        try {
-            Http::post($webhook, [
-                'content' => $message,
-                'username' => 'Monitoring Alerts',
-            ]);
-        } catch (\Exception $e) {
-            \Log::error('Falha ao enviar alerta Discord', ['error' => $e->getMessage()]);
-        }
-    }
-
-    /**
-     * Envia email.
-     */
-    private function sendEmail(string $message, string $subject): void
-    {
-        $config = config('monitoring.alerts.email', []);
-        if (!($config['enabled'] ?? false) || empty($config['to'])) {
-            return;
-        }
-
-        try {
-            Mail::raw($message, function ($mail) use ($config, $subject) {
-                $mail->to($config['to'])
-                    ->from($config['from'])
-                    ->subject("[MONITORING] {$subject}");
-            });
-        } catch (\Exception $e) {
-            \Log::error('Falha ao enviar alerta Email', ['error' => $e->getMessage()]);
-        }
+        SendMonitoringAlertJob::dispatch($message, $subject);
     }
 }
