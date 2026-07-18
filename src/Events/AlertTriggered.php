@@ -18,38 +18,15 @@ use RiseTechApps\Monitoring\Entry\IncomingEntry;
 class AlertTriggered
 {
     /**
-     * Tipo do alerta.
-     *
-     * @var string
-     */
-    public string $type;
-
-    /**
-     * Entrada do monitoring que disparou o alerta.
-     *
-     * @var IncomingEntry
-     */
-    public IncomingEntry $entry;
-
-    /**
-     * Dados adicionais do contexto.
-     *
-     * @var array
-     */
-    public array $context;
-
-    /**
      * Indica se o alerta foi processado (evita duplicidade).
      *
      * @var bool
      */
     public bool $handled = false;
 
-    public function __construct(string $type, IncomingEntry $entry, array $context = [])
+    public function __construct(public string $type, public IncomingEntry $entry, public array $context = []
+    )
     {
-        $this->type = $type;
-        $this->entry = $entry;
-        $this->context = $context;
     }
 
     /**
@@ -78,28 +55,28 @@ class AlertTriggered
     {
         $content = $this->entry->content;
         return "🚨 Exceção: {$content['class']}\n" .
-               "Mensagem: {$content['message']}\n" .
-               "Arquivo: {$content['file']}:{$content['line']}";
+            "Mensagem: {$content['message']}\n" .
+            "Arquivo: {$content['file']}:{$content['line']}";
     }
 
     private function formatSlowRequestMessage(): string
     {
         $content = $this->entry->content;
         return "⏱️ Requisição Lenta: {$content['method']} {$content['uri']}\n" .
-               "Duração: {$content['duration']}ms";
+            "Duração: {$content['duration']}ms";
     }
 
     private function formatFailedJobMessage(): string
     {
         $content = $this->entry->content;
         return "🔥 Job Falhou: {$content['displayName']}\n" .
-               "Conexão: {$content['connection']} / {$content['queue']}";
+            "Conexão: {$content['connection']} / {$content['queue']}";
     }
 
     private function formatSlowQueryMessage(): string
     {
         $content = $this->entry->content;
         return "🐢 Query Lenta: {$content['time_ms']}ms\n" .
-               "SQL: " . substr($content['sql'], 0, 100) . "...";
+            "SQL: " . substr($content['sql'], 0, 100) . "...";
     }
 }
