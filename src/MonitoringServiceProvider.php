@@ -16,6 +16,7 @@ use RiseTechApps\Monitoring\Console\Commands\MonitoringExportCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringReportCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringRetentionCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringTestWatchersCommand;
+use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Http\Middleware\DisableMonitoringMiddleware;
 use RiseTechApps\Monitoring\Loggly\Loggly;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
@@ -34,7 +35,7 @@ class MonitoringServiceProvider extends ServiceProvider
     /**
      * Comandos internos do framework que não devem inicializar o monitoramento.
      */
-    private const IGNORED_COMMANDS = [
+    private const array IGNORED_COMMANDS = [
         'package:discover',
         'vendor:publish',
         'config:cache',
@@ -154,6 +155,13 @@ class MonitoringServiceProvider extends ServiceProvider
         // Resposta enviada ao cliente → flush assíncrono
         $this->app->terminating(function () {
             Monitoring::flushAll();
+
+            // Estado por request que vive em propriedades estáticas / singletons.
+            // Em Octane e FrankenPHP o processo sobrevive ao request e, sem esta
+            // limpeza, o batch_id e o device do primeiro request atendido pelo
+            // worker vazariam para todos os seguintes.
+            $this->app->make(BatchIdService::class)->forceDelete();
+            IncomingEntry::resetDeviceCache();
         });
 
         Log::extend('monitoring', function ($app, array $config) {
@@ -164,6 +172,7 @@ class MonitoringServiceProvider extends ServiceProvider
         });
     }
 
+    #[\Override]
     public function register(): void
     {
         $this->mergeConfigFrom(__DIR__ . '/../config/config.php', 'monitoring');
@@ -198,32 +207,20 @@ class MonitoringServiceProvider extends ServiceProvider
         });
 
         // RetentionService
-        $this->app->bind(RetentionService::class, function ($app) {
-            return new RetentionService($app->make(MonitoringQueryService::class));
-        });
+        $this->app->bind(RetentionService::class, fn($app) => new RetentionService($app->make(MonitoringQueryService::class)));
 
         // ExportService
-        $this->app->bind(ExportService::class, function ($app) {
-            return new ExportService($app->make(MonitoringQueryService::class));
-        });
+        $this->app->bind(ExportService::class, fn($app) => new ExportService($app->make(MonitoringQueryService::class)));
 
         // AlertService
-        $this->app->singleton(AlertService::class, function ($app) {
-            return new AlertService();
-        });
+        $this->app->singleton(AlertService::class, fn($app) => new AlertService());
 
         // ReportService
-        $this->app->singleton(ReportService::class, function ($app) {
-            return new ReportService($app->make(MonitoringRepositoryInterface::class));
-        });
+        $this->app->singleton(ReportService::class, fn($app) => new ReportService($app->make(MonitoringRepositoryInterface::class)));
 
-        $this->app->singleton('monitoring', function () {
-            return new Monitoring(app(MonitoringRepositoryInterface::class));
-        });
+        $this->app->singleton('monitoring', fn() => new Monitoring(app(MonitoringRepositoryInterface::class)));
 
-        $this->app->singleton(BatchIdService::class, function ($app) {
-            return new BatchIdService();
-        });
+        $this->app->singleton(BatchIdService::class, fn($app) => new BatchIdService());
 
         /**
          * CORREÇÃO BUG #1 (v2.1): Loggly registrado como singleton.
@@ -239,13 +236,9 @@ class MonitoringServiceProvider extends ServiceProvider
          * - O Monitoring já gerencia o buffer estático e o terminating() hook,
          *   portanto o buffer interno da Loggly foi removido (BUG #3).
          */
-        $this->app->singleton(Loggly::class, function ($app) {
-            return new Loggly();
-        });
+        $this->app->singleton(Loggly::class, fn($app) => new Loggly());
 
-        $this->app->singleton(Device::class, function ($app) {
-            return new Device();
-        });
+        $this->app->singleton(Device::class, fn($app) => new Device());
     }
 
     private function isIgnoredArtisanCommand(): bool
