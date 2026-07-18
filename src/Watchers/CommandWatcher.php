@@ -20,7 +20,7 @@ class CommandWatcher extends Watcher
      */
     public function register($app): void
     {
-        $app['events']->listen(CommandFinished::class, [$this, 'recordCommand']);
+        $app['events']->listen(CommandFinished::class, $this->recordCommand(...));
     }
 
     /**
@@ -58,7 +58,7 @@ class CommandWatcher extends Watcher
      * Lista de comandos internos do framework que sempre devem ser ignorados.
      * Estes são comandos de manutenção e não devem gerar logs de monitoramento.
      */
-    private const DEFAULT_IGNORED_COMMANDS = [
+    private const array DEFAULT_IGNORED_COMMANDS = [
         'schedule:run',
         'schedule:finish',
         'package:discover',
