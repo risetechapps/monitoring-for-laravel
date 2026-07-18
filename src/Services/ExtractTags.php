@@ -20,7 +20,7 @@ class ExtractTags
      * obtém os modelos associados ao objeto e formata essas informações
      * para obter as tags.
      *
-     * @param  mixed  $target O objeto do qual extrair as tags.
+     * @param mixed $target O objeto do qual extrair as tags.
      * @return array As tags extraídas.
      */
     public static function from($target): array
@@ -29,9 +29,7 @@ class ExtractTags
             return $tags;
         }
 
-        return static::modelsFor([$target])->map(function ($model) {
-            return FormatModel::given($model);
-        })->all();
+        return static::modelsFor([$target])->map(fn($model) => FormatModel::given($model))->all();
     }
 
     /**
@@ -41,7 +39,7 @@ class ExtractTags
      * explícitas, obtém os modelos associados aos alvos do trabalho e
      * formata essas informações para obter as tags.
      *
-     * @param  mixed  $job O trabalho do qual extrair as tags.
+     * @param mixed $job O trabalho do qual extrair as tags.
      * @return array As tags extraídas.
      */
     public static function fromJob($job): array
@@ -50,9 +48,7 @@ class ExtractTags
             return $tags;
         }
 
-        return static::modelsFor(static::targetsFor($job))->map(function ($model) {
-            return FormatModel::given($model);
-        })->all();
+        return static::modelsFor(static::targetsFor($job))->map(fn($model) => FormatModel::given($model))->all();
     }
 
     /**
@@ -61,16 +57,13 @@ class ExtractTags
      * Este método resolve cada valor no array para extrair possíveis tags,
      * e formata os modelos encontrados para obter as tags.
      *
-     * @param  array  $data O array do qual extrair as tags.
+     * @param array $data O array do qual extrair as tags.
      * @return array As tags extraídas.
      */
     public static function fromArray(array $data): array
     {
-        return collect($data)->map(function ($value) {
-            return static::resolveValue($value);
-        })->collapse()->filter()->map(function ($model) {
-            return FormatModel::given($model);
-        })->all();
+        return collect($data)->map(fn($value) => static::resolveValue($value))
+            ->collapse()->filter()->map(fn($model) => FormatModel::given($model))->all();
     }
 
     /**
@@ -80,7 +73,7 @@ class ExtractTags
      * e, se for, obtém as tags associadas ao ouvinte. Caso contrário, extrai
      * tags explícitas dos alvos do trabalho.
      *
-     * @param  mixed  $job O trabalho do qual extrair as tags explícitas.
+     * @param mixed $job O trabalho do qual extrair as tags explícitas.
      * @return array As tags explícitas extraídas.
      */
     protected static function extractExplicitTags($job): array
@@ -96,16 +89,14 @@ class ExtractTags
      * Este método extrai o ouvinte e o evento do trabalho e obtém tags
      * associadas a ambos.
      *
-     * @param  mixed  $job O trabalho do qual extrair as tags para o ouvinte.
+     * @param mixed $job O trabalho do qual extrair as tags para o ouvinte.
      * @return array As tags extraídas.
      */
     protected static function tagsForListener($job): array
     {
         return collect(
             [static::extractListener($job), static::extractEvent($job)]
-        )->map(function ($job) {
-            return static::from($job);
-        })->collapse()->unique()->toArray();
+        )->map(fn($job) => static::from($job))->collapse()->unique()->toArray();
     }
 
     /**
@@ -114,14 +105,12 @@ class ExtractTags
      * Este método verifica se os alvos fornecidos têm um método `tags()`.
      * Se tiver, obtém as tags desse método. Caso contrário, retorna um array vazio.
      *
-     * @param  array  $targets Os alvos dos quais extrair tags explícitas.
+     * @param array $targets Os alvos dos quais extrair tags explícitas.
      * @return array As tags explícitas extraídas.
      */
     protected static function explicitTags(array $targets): array
     {
-        return collect($targets)->map(function ($target) {
-            return method_exists($target, 'tags') ? $target->tags() : [];
-        })->collapse()->unique()->all();
+        return collect($targets)->map(fn($target) => method_exists($target, 'tags') ? $target->tags() : [])->collapse()->unique()->all();
     }
 
     /**
@@ -130,23 +119,18 @@ class ExtractTags
      * Este método determina o tipo do trabalho e retorna os alvos associados,
      * como evento, mailable ou notificação.
      *
-     * @param  mixed  $job O trabalho do qual obter os alvos.
+     * @param mixed $job O trabalho do qual obter os alvos.
      * @return array Os alvos do trabalho.
      */
     protected static function targetsFor($job): array
     {
-        switch (true) {
-            case $job instanceof BroadcastEvent:
-                return [$job->event];
-            case $job instanceof CallQueuedListener:
-                return [static::extractEvent($job)];
-            case $job instanceof SendQueuedMailable:
-                return [$job->mailable];
-            case $job instanceof SendQueuedNotifications:
-                return [$job->notification];
-            default:
-                return [$job];
-        }
+        return match (true) {
+            $job instanceof BroadcastEvent => [$job->event],
+            $job instanceof CallQueuedListener => [static::extractEvent($job)],
+            $job instanceof SendQueuedMailable => [$job->mailable],
+            $job instanceof SendQueuedNotifications => [$job->notification],
+            default => [$job],
+        };
     }
 
     /**
@@ -155,20 +139,17 @@ class ExtractTags
      * Este método usa reflexão para acessar propriedades privadas e protegidas
      * do objeto e retorna todos os modelos encontrados.
      *
-     * @param  array  $targets Os alvos dos quais obter os modelos.
+     * @param array $targets Os alvos dos quais obter os modelos.
      * @return \Illuminate\Support\Collection Coleção de modelos encontrados.
      */
+
     protected static function modelsFor(array $targets)
     {
-        return collect($targets)->map(function ($target) {
-            return collect((new ReflectionClass($target))->getProperties())->map(function ($property) use ($target) {
-                $property->setAccessible(true);
-
-                if (PHP_VERSION_ID < 70400 || ! is_object($target) || $property->isInitialized($target)) {
-                    return static::resolveValue($property->getValue($target));
-                }
-            })->collapse()->filter();
-        })->collapse()->unique();
+        return collect($targets)->map(fn($target) => collect(new ReflectionClass($target)->getProperties())->map(function ($property) use ($target) {
+            if (PHP_VERSION_ID < 70400 || !is_object($target) || $property->isInitialized($target)) {
+                         return static::resolveValue($property->getValue($target));
+            }
+        })->collapse()->filter())->collapse()->unique();
     }
 
     /**
@@ -177,14 +158,14 @@ class ExtractTags
      * Este método usa reflexão para criar uma nova instância do ouvinte
      * a partir da classe especificada no trabalho.
      *
-     * @param  mixed  $job O trabalho do qual extrair o ouvinte.
+     * @param mixed $job O trabalho do qual extrair o ouvinte.
      * @return mixed O ouvinte extraído.
      *
      * @throws \ReflectionException Se houver um erro ao criar uma nova instância.
      */
     protected static function extractListener($job)
     {
-        return (new ReflectionClass($job->class))->newInstanceWithoutConstructor();
+        return new ReflectionClass($job->class)->newInstanceWithoutConstructor();
     }
 
     /**
@@ -194,7 +175,7 @@ class ExtractTags
      * retorna o primeiro objeto encontrado. Caso contrário, retorna uma nova instância
      * de `stdClass`.
      *
-     * @param  mixed  $job O trabalho do qual extrair o evento.
+     * @param mixed $job O trabalho do qual extrair o evento.
      * @return mixed O evento extraído.
      */
     protected static function extractEvent($job)
@@ -210,7 +191,7 @@ class ExtractTags
      * Este método verifica o tipo do valor e retorna uma coleção contendo
      * o valor se for um modelo ou uma coleção de modelos.
      *
-     * @param  mixed  $value O valor a ser resolvido.
+     * @param mixed $value O valor a ser resolvido.
      * @return \Illuminate\Support\Collection|null A coleção de modelos, ou null se não for aplicável.
      */
     protected static function resolveValue($value)

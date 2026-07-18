@@ -12,6 +12,9 @@ use Illuminate\Auth\Access\Response;
 
 class GateWatcher extends Watcher
 {
+    /** Frames de backtrace inspecionados para localizar o chamador */
+    private const int MAX_TRACE_FRAMES = 20;
+
     /**
      * Registra o ouvinte de eventos para a avaliação de permissões.
      *
@@ -23,7 +26,7 @@ class GateWatcher extends Watcher
      */
     public function register($app): void
     {
-        $app['events']->listen(GateEvaluated::class, [$this, 'handleGateEvaluated']);
+        $app['events']->listen(GateEvaluated::class, $this->handleGateEvaluated(...));
     }
 
     /**
@@ -123,9 +126,7 @@ class GateWatcher extends Watcher
      */
     private function formatArguments($arguments): array
     {
-        return collect($arguments)->map(function ($argument) {
-            return $argument instanceof Model ? FormatModel::given($argument) : $argument;
-        })->toArray();
+        return collect($arguments)->map(fn($argument) => $argument instanceof Model ? FormatModel::given($argument) : $argument)->toArray();
     }
 
     /**
@@ -136,30 +137,34 @@ class GateWatcher extends Watcher
      */
     protected function getCallerFromStackTrace($forgetLines = 0)
     {
-        $trace = collect(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS))->forget($forgetLines);
+        // O backtrace é limitado. Antes vinha sem limite: capturava a pilha
+        // inteira a cada checagem de permissão, e uma request com policies faz
+        // dezenas delas. MAX_TRACE_FRAMES cobre a distância até o código de
+        // aplicação com folga.
+        $trace = collect(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, self::MAX_TRACE_FRAMES))
+            ->forget($forgetLines);
 
-        return $trace->first(function ($frame) {
+        // Resolvido uma vez, não por frame — base_path() percorre o container.
+        $ignoredPath = base_path('vendor' . DIRECTORY_SEPARATOR . $this->ignoredVendorPath());
+
+        return $trace->first(function ($frame) use ($ignoredPath) {
             if (!isset($frame['file'])) {
                 return false;
             }
 
-            return !Str::contains($frame['file'],
-                base_path('vendor' . DIRECTORY_SEPARATOR . $this->ignoredVendorPath())
-            );
+            return !Str::contains($frame['file'], $ignoredPath);
         });
     }
 
     /**
      * Obtém o caminho do pacote a ser ignorado na pilha de rastreamento.
-     *
-     * @return string|null O caminho do pacote a ser ignorado ou null se não houver pacotes a serem ignorados.
      */
-    protected function ignoredVendorPath(): ?string
+    protected function ignoredVendorPath(): string
     {
-        if (!($this->options['ignore_packages'] ?? true)) {
-            return 'laravel';
-        }
-
-        return $this->options['ignore_packages'];
+        // 'laravel' é o padrão: pula os frames do framework para chegar ao
+        // código da aplicação. A versão anterior lia options['ignore_packages']
+        // sem checar existência e emitia "Undefined array key" em toda checagem
+        // de permissão, já que a chave não existe na configuração padrão.
+        return $this->options['ignore_packages'] ?? 'laravel';
     }
 }

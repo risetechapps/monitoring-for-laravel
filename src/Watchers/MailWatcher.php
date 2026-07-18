@@ -12,7 +12,7 @@ class MailWatcher extends Watcher
 {
     public function register($app): void
     {
-        $app['events']->listen(MessageSent::class, [$this, 'recordMail']);
+        $app['events']->listen(MessageSent::class, $this->recordMail(...));
     }
 
     public function recordMail(MessageSent $event): void
@@ -75,7 +75,7 @@ class MailWatcher extends Watcher
         $ignoredSubjects = $this->options['ignore_subjects_containing'] ?? [];
         $subject = strtolower($event->message->getSubject() ?? '');
         foreach ($ignoredSubjects as $ignoredText) {
-            if (str_contains($subject, strtolower($ignoredText))) {
+            if (str_contains($subject, strtolower((string) $ignoredText))) {
                 return true;
             }
         }

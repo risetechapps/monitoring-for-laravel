@@ -18,17 +18,8 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
  */
 class IncomingExceptionEntry extends IncomingEntry
 {
-    /**
-     * Mantemos a referência APENAS para poder chamar shouldReport() no handler.
-     * Deve ser anulada após o uso para liberar a cadeia de exceções da memória.
-     *
-     * @var \Throwable|null
-     */
-    private ?\Throwable $exceptionRef;
-
-    public function __construct(\Throwable $exception, array $content)
+    public function __construct(private ?\Throwable $exceptionRef, array $content)
     {
-        $this->exceptionRef = $exception;
         parent::__construct($content);
     }
 

@@ -7,16 +7,18 @@ namespace RiseTechApps\Monitoring\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Http\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Services\ExportService;
+use RiseTechApps\Monitoring\Services\MonitoringQueryService;
 use RiseTechApps\Monitoring\Services\PerformanceMonitoringService;
 
 class MonitoringController extends Controller
 {
     public function __construct(
         protected MonitoringRepositoryInterface $monitoringRepository,
-        protected ExportService $exportService
+        protected ExportService $exportService,
+        protected MonitoringQueryService $queryService
     ) {}
 
     /**
@@ -198,10 +200,10 @@ class MonitoringController extends Controller
      *   "expand_batch": true          // opcional — expande para o batch completo
      * }
      */
-    public function export(Request $request): Response|JsonResponse
+    public function export(Request $request): StreamedResponse|JsonResponse
     {
         try {
-            $format = strtolower($request->input('format', 'csv'));
+            $format = strtolower((string) $request->input('format', 'csv'));
 
             if (!in_array($format, ['csv', 'json'], true)) {
                 return response()->json(['message' => "Formato inválido: {$format}. Use 'csv' ou 'json'."], 422);
@@ -217,20 +219,25 @@ class MonitoringController extends Controller
                 'expand_batch' => $request->boolean('expand_batch'),
             ]);
 
-            $result = match ($format) {
-                'json'  => $this->exportService->exportJson($filters),
-                default => $this->exportService->exportCsv($filters),
-            };
-
-            if ($result['count'] === 0) {
+            // O 404-quando-vazio precisa ser decidido ANTES de começar a
+            // transmitir: uma vez enviados os headers, não dá para trocar o status.
+            if (!$this->exportService->hasResults($filters)) {
                 return response()->json(['message' => 'Nenhum registro encontrado com os filtros informados.'], 404);
             }
 
-            return response($result['content'], 200, [
-                'Content-Type'        => $result['mime'],
-                'Content-Disposition' => "attachment; filename=\"{$result['filename']}\"",
-                'X-Total-Records'     => $result['count'],
-            ]);
+            $filename = $this->exportService->filenameFor($format);
+
+            // Resposta streaming: as linhas são lidas por cursor e escritas direto
+            // no output, sem montar o arquivo inteiro na memória do processo.
+            return response()->streamDownload(
+                function () use ($format, $filters) {
+                    $handle = fopen('php://output', 'wb');
+                    $this->exportService->streamTo($format, $filters, $handle);
+                    fclose($handle);
+                },
+                $filename,
+                ['Content-Type' => $this->exportService->mimeFor($format)]
+            );
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -281,7 +288,7 @@ class MonitoringController extends Controller
                 ],
                 'timestamp' => now()->toIso8601String(),
             ]);
-        } catch (\Exception $exception) {
+        } catch (\Exception) {
             return response()->json([
                 'status' => 'unhealthy',
                 'error' => 'Unable to determine health status',
@@ -440,7 +447,9 @@ class MonitoringController extends Controller
             }
 
             $type = $request->input('type');
-            $results = $this->monitoringRepository->searchEvents($query, $type);
+            // Janela de busca em dias; limita o range antes do LIKE rodar.
+            $days = (int) $request->input('days', 30);
+            $results = $this->monitoringRepository->searchEvents($query, $type, $days);
 
             return response()->jsonSuccess($results);
         } catch (\Exception $exception) {
@@ -456,23 +465,27 @@ class MonitoringController extends Controller
     /**
      * Obtém dados de um período específico.
      */
+    /**
+     * Obtém dados agregados de um período.
+     *
+     * A contagem é feita no banco. A versão anterior carregava todos os eventos
+     * do período na memória para então chamar count() e groupBy() em PHP —
+     * 30 dias de eventos materializados para produzir alguns números.
+     */
     private function getPeriodData(string $period, ?string $type = null): array
     {
-        $events = match ($period) {
-            'last_24_hours', '24h' => $this->monitoringRepository->getLast24Hours(),
-            'last_7_days', '7d' => $this->monitoringRepository->getLast7Days(),
-            'last_30_days', '30d' => $this->monitoringRepository->getLast30Days(),
-            default => collect(),
+        $days = match ($period) {
+            'last_24_hours', '24h' => 1,
+            'last_7_days', '7d' => 7,
+            'last_30_days', '30d' => 30,
+            default => null,
         };
 
-        if ($type) {
-            $events = $events->where('type', $type);
+        if ($days === null) {
+            return ['total' => 0, 'by_type' => []];
         }
 
-        return [
-            'total' => $events->count(),
-            'by_type' => $events->groupBy('type')->map(fn($group) => $group->count()),
-        ];
+        return $this->queryService->countByTypeSince($days, $type);
     }
 
     /**

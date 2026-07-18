@@ -36,7 +36,7 @@ trait HasLoggly
 
                     Monitoring::recordModel(
                         IncomingEntry::make([
-                            'model'     => get_class($model),
+                            'model'     => $model::class,
                             'oldValues' => $model->getRawOriginal(),
                             'newValues' => $model->getAttributes(),
                             'modified'  => $modified,
@@ -57,7 +57,7 @@ trait HasLoggly
 
                     Monitoring::recordModel(
                         IncomingEntry::make([
-                            'model'     => get_class($model),
+                            'model'     => $model::class,
                             'newValues' => $model->getAttributes(),
                             'action'    => 'Restored record.',
                         ])
@@ -73,7 +73,7 @@ trait HasLoggly
             static::registerModelEvent($eventName, function (Model $model) use ($eventName) {
                 Monitoring::recordModel(
                     IncomingEntry::make([
-                        'model'     => get_class($model),
+                        'model'     => $model::class,
                         'newValues' => $model->getAttributes(),
                         'action'    => static::getActionForEvent($eventName, $model),
                     ])

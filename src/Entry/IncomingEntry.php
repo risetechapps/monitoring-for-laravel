@@ -18,12 +18,18 @@ class IncomingEntry
     public mixed $tags = [];
     public Carbon|CarbonInterface $recordedAt;
 
-    private mixed $batchIdService;
-
     /** Dados do usuário — apenas primitivos, nunca o modelo Eloquent */
     private array $userData = [];
 
-    /** Cache estático de device por processo — evita múltiplas chamadas HTTP por request */
+    /**
+     * Cache de device do request em curso — evita múltiplas chamadas HTTP quando
+     * várias entradas são gravadas no mesmo request.
+     *
+     * É estático, então precisa ser limpo entre requests via resetDeviceCache().
+     * Sem isso, em Octane/FrankenPHP (onde o processo sobrevive ao request) o
+     * device do primeiro usuário atendido pelo worker seria atribuído a todos
+     * os seguintes.
+     */
     private static ?array $deviceCache = null;
 
     /** Dados de device capturados no construtor */
@@ -41,10 +47,18 @@ class IncomingEntry
 
         $this->content = array_merge($content, ['hostname' => gethostname()]);
 
-        $this->batchIdService = app(BatchIdService::class);
-        $this->batchIdService->setBatchId((string) Str::orderedUuid());
+        // O batch é resolvido AQUI, não em toArray().
+        //
+        // A entrada fica no buffer até o flush, e quem a produziu pode ter
+        // encerrado seu batch nesse meio-tempo (JobWatcher chama forceDelete()
+        // logo após registrar). Resolver na serialização faria a entrada receber
+        // um batch novo e perder a correlação com o resto do job.
+        //
+        // getBatchId() cria um sob demanda e reaproveita o existente, então a
+        // primeira entrada do request define o batch e as seguintes o herdam.
+        $this->batchId = app(BatchIdService::class)->getBatchId();
 
-        // Captura device UMA vez por processo via cache estático
+        // Captura device uma vez por request (ver resetDeviceCache)
         if (self::$deviceCache === null) {
             try {
                 self::$deviceCache = Device::info() ?? [];
@@ -59,6 +73,15 @@ class IncomingEntry
     public static function make(...$arguments): static
     {
         return new static(...$arguments);
+    }
+
+    /**
+     * Limpa o cache de device. Chamado ao fim de cada request para que o
+     * próximo não herde o device do anterior em processos persistentes.
+     */
+    public static function resetDeviceCache(): void
+    {
+        self::$deviceCache = null;
     }
 
     public function batchId(string $batchId): static
@@ -114,7 +137,7 @@ class IncomingEntry
     {
         return [
             'uuid'       => $this->uuid,
-            'batch_id'   => $this->batchIdService->getBatchId(),
+            'batch_id'   => $this->batchId,
             'type'       => $this->type,
             'content'    => $this->encodeContent($this->content),
             'tags'       => $this->tags,

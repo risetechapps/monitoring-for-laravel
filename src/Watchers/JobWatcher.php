@@ -8,7 +8,6 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Queue;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
-use RiseTechApps\Monitoring\Jobs\SendMonitoringPayloadJob;
 use RiseTechApps\Monitoring\Monitoring;
 use RiseTechApps\Monitoring\Services\BatchIdService;
 use RiseTechApps\Monitoring\Services\ExceptionContext;
@@ -23,7 +22,7 @@ class JobWatcher extends Watcher
      * Namespaces de jobs internos que NUNCA devem ser monitorados.
      * Evita o loop: job de monitoring falha → JobFailed → novo job → falha → ...
      */
-    private const DEFAULT_IGNORED_NAMESPACES = [
+    private const array DEFAULT_IGNORED_NAMESPACES = [
         'RiseTechApps\\Monitoring\\',   // todos os jobs deste pacote
         'Laravel\\Telescope\\',          // jobs internos do Telescope
         'Laravel\\Horizon\\',            // jobs internos do Horizon
@@ -44,8 +43,8 @@ class JobWatcher extends Watcher
             return ['batch_id' => $batchId];
         });
 
-        $app['events']->listen(JobProcessed::class, [$this, 'recordProcessedJob']);
-        $app['events']->listen(JobFailed::class, [$this, 'recordFailedJob']);
+        $app['events']->listen(JobProcessed::class, $this->recordProcessedJob(...));
+        $app['events']->listen(JobFailed::class, $this->recordFailedJob(...));
     }
 
     public function recordPendingJob($connection, $queue, array $payload): object
@@ -196,7 +195,7 @@ class JobWatcher extends Watcher
         $className = null;
 
         if (is_object($command)) {
-            $className = get_class($command);
+            $className = $command::class;
         } elseif (is_string($command) && $command !== '') {
             // Pode ser displayName ("App\Jobs\MyJob") ou classe serializada
             $className = $command;
@@ -220,13 +219,15 @@ class JobWatcher extends Watcher
             $this->options['ignore_namespaces'] ?? []
         );
         foreach ($ignoredNamespaces as $ns) {
-            if (str_starts_with($className, $ns)) {
+            if (str_starts_with($className, (string) $ns)) {
                 return true;
             }
         }
 
-        // Mantém compatibilidade com a verificação exata anterior
-        return $className === SendMonitoringPayloadJob::class
-            || is_a($className, SendMonitoringPayloadJob::class, true);
+        // Os jobs do próprio pacote já são cobertos pelo prefixo
+        // 'RiseTechApps\Monitoring\' em DEFAULT_IGNORED_NAMESPACES. A checagem
+        // que existia aqui referenciava SendMonitoringPayloadJob — classe de um
+        // mecanismo de envio assíncrono que não existe mais no pacote.
+        return false;
     }
 }
