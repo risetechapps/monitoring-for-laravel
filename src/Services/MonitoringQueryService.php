@@ -254,25 +254,6 @@ class MonitoringQueryService
     }
 
     /**
-     * Retorna IDs dos registros elegíveis para retenção (mais antigos que $days).
-     * Feito em chunked para não explodir a memória em tabelas grandes.
-     */
-    public function getRetentionCandidateIds(int $retentionDays, int $chunkSize = 1000): \Generator
-    {
-        $this->scopeOlderThan($this->query(), $retentionDays)
-            ->orderBy('created_at', 'ASC')
-            ->select(['id', 'created_at', 'type'])
-            ->chunk($chunkSize, function (Collection $rows) use (&$ids) {
-                yield $rows;
-            });
-
-        // Usa cursor para não carregar tudo na memória
-        return $this->scopeOlderThan($this->query(), $retentionDays)
-            ->orderBy('created_at', 'ASC')
-            ->cursor();
-    }
-
-    /**
      * Retorna registros para backup em lote (chunked por data de criação).
      *
      * @param int $retentionDays
