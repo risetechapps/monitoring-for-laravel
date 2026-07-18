@@ -60,23 +60,37 @@ class MonitoringExportCommand extends Command
 
         $this->info('Gerando exportação...');
 
-        $result = match ($format) {
-            'json'  => $this->exportService->exportJson($filters),
-            default => $this->exportService->exportCsv($filters),
-        };
+        // Buffer em php://temp: memória constante para exports pequenos, cai para
+        // disco nos grandes. Evita montar o arquivo inteiro como string — um
+        // export sem filtros pode ser a tabela toda.
+        $handle = fopen('php://temp/maxmemory:' . (8 * 1024 * 1024), 'r+b');
 
-        if ($result['count'] === 0) {
-            $this->warn('Nenhum registro encontrado com os filtros informados.');
-            return self::SUCCESS;
+        try {
+            $count = $this->exportService->streamTo($format, $filters, $handle);
+
+            if ($count === 0) {
+                $this->warn('Nenhum registro encontrado com os filtros informados.');
+                return self::SUCCESS;
+            }
+
+            rewind($handle);
+
+            if ($stdout) {
+                // fpassthru transmite o buffer sem duplicá-lo na memória.
+                fpassthru($handle);
+                return self::SUCCESS;
+            }
+
+            $path = 'monitoring/exports/' . $this->exportService->filenameFor($format);
+
+            // writeStream envia o buffer em blocos ao disco (inclusive S3),
+            // sem carregar o conteúdo inteiro de uma vez.
+            $written = Storage::disk($disk)->writeStream($path, $handle);
+        } finally {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
         }
-
-        if ($stdout) {
-            $this->line($result['content']);
-            return self::SUCCESS;
-        }
-
-        $path    = 'monitoring/exports/' . $result['filename'];
-        $written = Storage::disk($disk)->put($path, $result['content']);
 
         if (!$written) {
             $this->error("Falha ao gravar o arquivo em [{$disk}]: {$path}");
@@ -87,7 +101,7 @@ class MonitoringExportCommand extends Command
         $this->table(
             ['Detalhe', 'Valor'],
             [
-                ['Registros exportados', number_format($result['count'])],
+                ['Registros exportados', number_format($count)],
                 ['Formato',              strtoupper($format)],
                 ['Disco',                $disk],
                 ['Arquivo',              $path],

@@ -21,6 +21,26 @@ use RiseTechApps\Monitoring\Services\MonitoringQueryService;
  */
 class MonitoringRepository implements MonitoringRepositoryInterface
 {
+    /** Itens por página quando o cliente não informa */
+    protected const DEFAULT_PER_PAGE = 50;
+
+    /** Teto de itens por página — per_page é entrada do usuário */
+    protected const MAX_PER_PAGE = 200;
+
+    /**
+     * Teto para consultas sem paginação (getAllEvents, getEventsByTypes, ...).
+     *
+     * A tabela `monitoring` cresce sem limite por natureza, então nenhuma leitura
+     * pode carregar "tudo": sem teto, um único GET derruba o container.
+     */
+    protected const MAX_ROWS = 1000;
+
+    /** Janela padrão da busca, em dias, quando o cliente não informa */
+    protected const SEARCH_DEFAULT_DAYS = 30;
+
+    /** Máximo de resultados da busca */
+    protected const SEARCH_LIMIT = 100;
+
     protected string $table = 'monitoring';
     protected string $connection;
     protected MonitoringQueryService $queryService;
@@ -29,7 +49,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
     public function __construct(?string $connection = null)
     {
-        $this->connection   = $connection ?? config('monitoring.drivers.database.connection', config('database.default'));
+        $this->connection = $connection ?? config('monitoring.drivers.database.connection', config('database.default'));
         $this->queryService = new MonitoringQueryService($this->connection);
     }
 
@@ -58,7 +78,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
     public function getAllEvents(): Collection
     {
         return $this->queryService->getAll()
-            ->map(fn ($event) => $this->formatEvent($event));
+            ->map(fn($event) => $this->formatEvent($event));
     }
 
     public function getEventById(string $id): Collection
@@ -70,7 +90,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         }
 
         $related = $this->queryService->getByBatchId($event->batch_id)
-            ->reject(fn ($row) => $row->id === $event->id)
+            ->reject(fn($row) => $row->id === $event->id)
             ->values();
 
         return collect($this->formatEvent($event, $related));
@@ -86,16 +106,22 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
         $batchIds = $events->pluck('batch_id')->unique()->values()->toArray();
 
+        // Teto na expansão de related. Cada evento primário traz os irmãos do
+        // mesmo batch; sem limite, batches grandes multiplicam as linhas e o
+        // resultado cresce muito além dos eventos primários (já limitados).
+        // Em conjuntos grandes alguns related são truncados — aceitável num
+        // listagem de dashboard, ao contrário de estourar a memória.
         $related = DB::connection($this->connection)
             ->table($this->table)
             ->whereIn('batch_id', $batchIds)
             ->orderBy('created_at', 'DESC')
+            ->limit(self::MAX_ROWS)
             ->get()
             ->groupBy('batch_id');
 
         return $events->map(function (object $event) use ($related): array {
             $relatedEvents = $related->get($event->batch_id, collect())
-                ->reject(fn ($row) => $row->id === $event->id)
+                ->reject(fn($row) => $row->id === $event->id)
                 ->values();
 
             return $this->formatEvent($event, $relatedEvents);
@@ -105,7 +131,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
     /**
      * Busca por tags JSON com rastreabilidade recursiva por batch_id.
      *
-     * @param  array<string, string>  $tags  ex.: ['user_id' => 'uuid-aqui']
+     * @param array<string, string> $tags ex.: ['user_id' => 'uuid-aqui']
      */
     public function getEventsByTags(array $tags = []): Collection
     {
@@ -115,7 +141,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
         $rows = $this->queryService->getByTagsWithBatchExpansion($tags);
 
-        return $rows->map(fn ($event) => $this->formatEvent($event));
+        return $rows->map(fn($event) => $this->formatEvent($event));
     }
 
     /**
@@ -124,7 +150,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
     public function getEventsByUserId(string $userId): Collection
     {
         return $this->queryService->getByUserId($userId)
-            ->map(fn ($event) => $this->formatEvent($event));
+            ->map(fn($event) => $this->formatEvent($event));
     }
 
     public function getByBatch(string $id): Collection
@@ -243,13 +269,11 @@ class MonitoringRepository implements MonitoringRepositoryInterface
             ->orderByDesc('count')
             ->get();
 
-        return $exceptions->map(function ($row) {
-            return [
-                'exception_class' => $row->exception_class,
-                'count' => $row->count,
-                'last_occurrence' => $row->last_occurrence,
-            ];
-        });
+        return $exceptions->map(fn($row) => [
+            'exception_class' => $row->exception_class,
+            'count' => $row->count,
+            'last_occurrence' => $row->last_occurrence,
+        ]);
     }
 
     /**
@@ -283,41 +307,29 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         $order = $filters['order'] ?? 'desc';
         $query->orderBy($sort, $order);
 
-        // Paginação
-        $perPage = $filters['per_page'] ?? 50;
+        // Paginação — per_page vem da query string, então precisa de teto.
+        // Sem ele, ?per_page=999999 carrega a tabela inteira na memória.
+        $perPage = (int)($filters['per_page'] ?? self::DEFAULT_PER_PAGE);
+        $perPage = max(1, min($perPage, self::MAX_PER_PAGE));
+
         $results = $query->paginate($perPage);
 
-        return $results->getCollection()->map(fn ($event) => $this->formatEvent($event));
+        return $results->getCollection()->map(fn($event) => $this->formatEvent($event));
     }
 
     /**
-     * Busca full-text nos eventos.
+     * Busca por substring em content/tags dentro de uma janela temporal.
+     *
+     * A lógica de query (janela obrigatória, driver-aware, escape de curingas)
+     * vive em MonitoringQueryService::search. A versão anterior fazia
+     * LOWER(content) LIKE '%...%' sem recorte de data — full table scan e
+     * índice descartado pelo LOWER() na coluna.
      */
-    public function searchEvents(string $query, ?string $type = null): Collection
+    public function searchEvents(string $query, ?string $type = null, int $days = self::SEARCH_DEFAULT_DAYS): Collection
     {
-        $dbQuery = DB::connection($this->connection)
-            ->table($this->table)
-            ->where(function ($q) use ($query) {
-                // Busca no conteúdo JSON
-                $q->whereRaw(
-                    "LOWER(content) LIKE ?",
-                    ['%' . strtolower($query) . '%']
-                )
-                ->orWhereRaw(
-                    "LOWER(tags) LIKE ?",
-                    ['%' . strtolower($query) . '%']
-                );
-            });
-
-        if ($type) {
-            $dbQuery->where('type', $type);
-        }
-
-        return $dbQuery
-            ->orderByDesc('created_at')
-            ->limit(100)
-            ->get()
-            ->map(fn ($event) => $this->formatEvent($event));
+        return $this->queryService
+            ->search($query, $type, max(1, $days), self::SEARCH_LIMIT)
+            ->map(fn($event) => $this->formatEvent($event));
     }
 
     /**
@@ -359,7 +371,7 @@ class MonitoringRepository implements MonitoringRepositoryInterface
             $firstEvent = $batchEvents->first();
 
             // Formata todos os eventos do batch em ordem cronológica
-            $timeline = $batchEvents->map(fn ($e) => $this->formatTimelineEvent($e));
+            $timeline = $batchEvents->map(fn($e) => $this->formatTimelineEvent($e));
 
             return [
                 'batch_id' => $batchId,
@@ -486,29 +498,29 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
     protected function formatEvent(object $event, ?Collection $related = null): array
     {
-        $related = $related ?? collect();
+        $related ??= collect();
 
         return [
-            'id'             => $event->id,
-            'uuid'           => $event->uuid,
-            'batch_id'       => $event->batch_id,
-            'type'           => $event->type,
-            'content'        => $this->decodeIfJson($event->content),
-            'tags'           => $this->decodeIfJson($event->tags),
-            'user'           => $this->decodeIfJson($event->user ?? null),
-            'device'         => $this->decodeIfJson($event->device ?? null),
-            'resolved_at'    => $event->resolved_at ?? null,
-            'resolved_by'    => $event->resolved_by ?? null,
-            'is_resolved'    => !empty($event->resolved_at),
-            'created_at'     => $event->created_at,
-            'updated_at'     => $event->updated_at,
-            'related_events' => $related->map(fn ($r) => [
-                'id'         => $r->id,
-                'uuid'       => $r->uuid,
-                'batch_id'   => $r->batch_id,
-                'type'       => $r->type,
-                'content'    => $this->decodeIfJson($r->content),
-                'tags'       => $this->decodeIfJson($r->tags),
+            'id' => $event->id,
+            'uuid' => $event->uuid,
+            'batch_id' => $event->batch_id,
+            'type' => $event->type,
+            'content' => $this->decodeIfJson($event->content),
+            'tags' => $this->decodeIfJson($event->tags),
+            'user' => $this->decodeIfJson($event->user ?? null),
+            'device' => $this->decodeIfJson($event->device ?? null),
+            'resolved_at' => $event->resolved_at ?? null,
+            'resolved_by' => $event->resolved_by ?? null,
+            'is_resolved' => !empty($event->resolved_at),
+            'created_at' => $event->created_at,
+            'updated_at' => $event->updated_at,
+            'related_events' => $related->map(fn($r) => [
+                'id' => $r->id,
+                'uuid' => $r->uuid,
+                'batch_id' => $r->batch_id,
+                'type' => $r->type,
+                'content' => $this->decodeIfJson($r->content),
+                'tags' => $this->decodeIfJson($r->tags),
                 'resolved_at' => $r->resolved_at ?? null,
                 'resolved_by' => $r->resolved_by ?? null,
                 'is_resolved' => !empty($r->resolved_at),
@@ -563,9 +575,9 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         }
 
         if (method_exists(Str::class, 'orderedUuid')) {
-            return (string) Str::orderedUuid();
+            return (string)Str::orderedUuid();
         }
 
-        return (string) Str::uuid();
+        return (string)Str::uuid();
     }
 }

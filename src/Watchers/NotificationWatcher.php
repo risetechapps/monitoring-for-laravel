@@ -25,7 +25,7 @@ class NotificationWatcher extends Watcher
      */
     public function register($app): void
     {
-        $app['events']->listen(NotificationSent::class, [$this, 'recordNotification']);
+        $app['events']->listen(NotificationSent::class, $this->recordNotification(...));
     }
 
     /**
@@ -48,7 +48,7 @@ class NotificationWatcher extends Watcher
             }
 
             $entry = IncomingEntry::make([
-                'notification' => get_class($event->notification),
+                'notification' => $event->notification::class,
                 'queued' => in_array(ShouldQueue::class, class_implements($event->notification)),
                 'notifiable' => $this->formatNotifiable($event->notifiable),
                 'channel' => $event->channel,
@@ -70,7 +70,7 @@ class NotificationWatcher extends Watcher
      */
     private function shouldIgnore(NotificationSent $event): bool
     {
-        $notificationClass = get_class($event->notification);
+        $notificationClass = $event->notification::class;
 
         // Verifica classes de notificação específicas
         $ignoredNotifications = $this->options['ignore_notifications'] ?? [];
@@ -124,13 +124,11 @@ class NotificationWatcher extends Watcher
         if ($notifiable instanceof Model) {
             return FormatModel::given($notifiable);
         } elseif ($notifiable instanceof AnonymousNotifiable) {
-            $routes = array_map(function ($route) {
-                return is_array($route) ? implode(',', $route) : $route;
-            }, $notifiable->routes);
+            $routes = array_map(fn($route) => is_array($route) ? implode(',', $route) : $route, $notifiable->routes);
 
             return 'Anonymous:' . implode(',', $routes);
         }
 
-        return get_class($notifiable);
+        return $notifiable::class;
     }
 }

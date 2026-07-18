@@ -129,7 +129,7 @@ class MonitoringRepositorySingle implements MonitoringRepositoryInterface
     /**
      * Operação não suportada no driver de arquivo.
      */
-    public function searchEvents(string $query, ?string $type = null): Collection
+    public function searchEvents(string $query, ?string $type = null, int $days = 30): Collection
     {
         return collect();
     }

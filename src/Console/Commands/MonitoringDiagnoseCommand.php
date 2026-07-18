@@ -120,7 +120,7 @@ class MonitoringDiagnoseCommand extends Command
 
         try {
             $repo = app(MonitoringRepositoryInterface::class);
-            $this->line('  <fg=green>✔  Repositório resolvido: ' . get_class($repo) . '</>');
+            $this->line('  <fg=green>✔  Repositório resolvido: ' . $repo::class . '</>');
         } catch (\Throwable $e) {
             $this->error('  ✗  Erro ao resolver repositório: ' . $e->getMessage());
             $allPassed = false;
@@ -150,7 +150,7 @@ class MonitoringDiagnoseCommand extends Command
             $this->line('  Últimas 5 linhas:');
             $last = array_slice(file($internalLog), -5);
             foreach ($last as $line) {
-                $this->line('     <fg=red>' . trim($line) . '</>');
+                $this->line('     <fg=red>' . trim((string) $line) . '</>');
             }
             $this->line("  Caminho completo: {$internalLog}");
             $allPassed = false;

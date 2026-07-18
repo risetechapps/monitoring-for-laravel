@@ -83,7 +83,7 @@ interface MonitoringRepositoryInterface
      * @param string|null $type Tipo de evento (opcional)
      * @return Collection Resultados da busca
      */
-    public function searchEvents(string $query, ?string $type = null): Collection;
+    public function searchEvents(string $query, ?string $type = null, int $days = 30): Collection;
 
     /**
      * Retorna timeline cronológico de eventos por tag.

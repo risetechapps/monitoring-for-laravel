@@ -269,7 +269,7 @@ class MonitoringTestWatchersCommand extends Command
                 ->value('batch_id');
 
             return $last;
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             return null;
         }
     }
@@ -372,7 +372,7 @@ class MonitoringTestWatchersCommand extends Command
 
                 default => 0,
             };
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             return 0;
         }
     }
