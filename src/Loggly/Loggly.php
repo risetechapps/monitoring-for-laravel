@@ -6,7 +6,6 @@ namespace RiseTechApps\Monitoring\Loggly;
 
 use DateTime;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use RiseTechApps\Monitoring\Entry\EntryType;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
@@ -46,10 +45,10 @@ use Throwable;
 class Loggly
 {
     /** Número máximo de frames de stack trace armazenados */
-    private const MAX_TRACE_FRAMES = 20;
+    private const int MAX_TRACE_FRAMES = 20;
 
     /** Tamanho máximo (bytes) de cada propriedade individual */
-    private const MAX_PROPERTY_SIZE = 8192; // 8 KB
+    private const int MAX_PROPERTY_SIZE = 8192; // 8 KB
 
     private array $logLevels = [
         'emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'model', 'debug',
@@ -99,10 +98,10 @@ class Loggly
     public function performedOn(mixed $performed): static
     {
         if ($performed instanceof Model) {
-            $this->performed   = get_class($performed);
+            $this->performed   = $performed::class;
             $this->performedID = (string) $performed->getKey();
         } else {
-            $this->performed = is_object($performed) ? get_class($performed) : (string) $performed;
+            $this->performed = is_object($performed) ? $performed::class : (string) $performed;
         }
         return $this;
     }
@@ -261,8 +260,16 @@ class Loggly
                 $line . PHP_EOL,
                 FILE_APPEND | LOCK_EX
             );
-        } catch (\Throwable $exception) { Log::info('LOGSERROR', [$exception->getMessage(), $exception->getFile(), $exception->getLine()]); ;
-            // Último recurso — silencia para não criar loop.
+        } catch (\Throwable $exception) {
+            // Último recurso (fallback do fallback): usa error_log() nativo do PHP,
+            // que NÃO passa pelo sistema de eventos do Laravel — evita a reentrância
+            // MessageLogged → ExceptionWatcher → record() que um Log::* aqui dispararia.
+            error_log(sprintf(
+                '[monitoring] Loggly::writeToFile falhou: %s em %s:%d',
+                $exception->getMessage(),
+                $exception->getFile(),
+                $exception->getLine()
+            ));
         }
     }
 
@@ -291,35 +298,49 @@ class Loggly
         return $result;
     }
 
+    /**
+     * Resolve a origem do log (arquivo, linha, classe, função) direto dos frames
+     * da pilha, sem depender do caminho do arquivo.
+     *
+     * O primeiro frame FORA da Loggly é o código que chamou ->log(): dele vêm a
+     * classe e a função reais — funciona para app, package OU vendor (a versão
+     * anterior derivava a classe do path e só reconhecia arquivos em app/,
+     * perdendo a origem de qualquer log fora dele). O file/line exatos da
+     * chamada ->log() estão no frame imediatamente anterior (o último frame
+     * interno da Loggly).
+     *
+     * Custo e memória constantes e baixos: profundidade fixa (8), IGNORE_ARGS,
+     * leitura direta — sem string parsing de path nem varredura casando classe.
+     */
     private function resolveCaller(): array
     {
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 10);
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 8);
 
-        $traceData = [
+        foreach ($trace as $i => $frame) {
+            // Pula os frames internos da própria Loggly (log, resolveCaller).
+            if (($frame['class'] ?? null) === self::class) {
+                continue;
+            }
+
+            $callSite = $trace[$i - 1] ?? $frame;
+            $file = $callSite['file'] ?? 'unknown';
+
+            return [
+                'file'     => $file,
+                'line'     => $callSite['line'] ?? 0,
+                // Classe real do frame; para chamador procedural/closure (sem
+                // classe), tenta derivar do arquivo — mantém o suporte anterior a app/.
+                'class'    => $frame['class'] ?? $this->fileToClass($file),
+                'function' => $frame['function'] ?? '{closure}',
+            ];
+        }
+
+        return [
             'file'     => 'unknown',
             'line'     => 0,
             'function' => '{closure}',
             'class'    => 'anonymous',
         ];
-
-        if (isset($trace[1])) {
-            $traceData['file']  = $trace[1]['file'] ?? 'unknown';
-            $traceData['line']  = $trace[1]['line'] ?? 0;
-            $traceData['class'] = $this->fileToClass($traceData['file']);
-        }
-
-        if ($traceData['class'] === 'anonymous') {
-            return $traceData;
-        }
-
-        foreach ($trace as $frame) {
-            if (isset($frame['class']) && $traceData['class'] === $frame['class']) {
-                $traceData['function'] = $frame['function'];
-                return $traceData;
-            }
-        }
-
-        return $traceData;
     }
 
     public function fileToClass(string $filePath): string

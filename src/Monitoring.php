@@ -91,6 +91,15 @@ class Monitoring
         $repository       = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
 
+        // Workers de fila processam um volume de eventos que não corresponde a
+        // tráfego de usuário — cada job arrasta suas queries, eventos e caches.
+        // Monitorá-los inunda a tabela sem gerar sinal útil, então ficam de fora
+        // por padrão, independente de monitoring.enabled (que segue valendo para HTTP).
+        if (static::isLongRunningWorker()) {
+            static::$enabled = false;
+            return;
+        }
+
         $configuredBuffer = (int) config('monitoring.buffer_size', self::$bufferSize);
         self::$bufferSize = max(1, $configuredBuffer);
 
@@ -98,7 +107,7 @@ class Monitoring
 
         foreach (static::configuredWatchers() as $watcherClass => $options) {
             $watcher = $app->make($watcherClass, ['options' => $options]);
-            static::$watchers[] = get_class($watcher);
+            static::$watchers[] = $watcher::class;
             $watcher->register($app);
         }
 
@@ -111,6 +120,45 @@ class Monitoring
             });
             static::$shutdownRegistered = true;
         }
+    }
+
+    /**
+     * Indica se o processo é um worker de fila de longa duração.
+     *
+     * Deliberadamente NÃO inclui `octane:start`: em Octane os workers atendem
+     * requisições HTTP, e tratá-los como worker de fila desligaria em silêncio
+     * todo o monitoramento da aplicação.
+     *
+     * `schedule:run` (execução pontual do cron) continua monitorado; apenas o
+     * daemon `schedule:work` fica de fora.
+     */
+    protected static function isLongRunningWorker(): bool
+    {
+        if (!App::runningInConsole()) {
+            return false;
+        }
+
+        $argv = $_SERVER['argv'] ?? [];
+
+        // O comando nem sempre é argv[1] — flags globais podem vir antes
+        // (`artisan --env=prod queue:work`). Pega o primeiro argumento que
+        // não seja uma opção.
+        foreach (array_slice($argv, 1) as $argument) {
+            if (str_starts_with((string) $argument, '-')) {
+                continue;
+            }
+
+            return in_array($argument, [
+                'queue:work',
+                'queue:listen',
+                'horizon',
+                'horizon:work',
+                'horizon:supervisor',
+                'schedule:work',
+            ], true);
+        }
+
+        return false;
     }
 
     protected static function configuredWatchers(): array
@@ -153,18 +201,22 @@ class Monitoring
                 'options' => [
                     'ignore_http_methods' => ['options'],
                     'ignore_status_codes' => [],
+                    // Padrões glob (ver RequestWatcher::shouldIgnorePaths)
                     'ignore_paths'        => [
-                        'telescope',
-                        'telescope-api',
-                        'horizon',
-                        'horizon/api/*',
-                        '_debugbar',
+                        'up',
+                        'telescope*',
+                        'telescope-api*',
+                        'horizon*',
+                        '_debugbar*',
                         'livewire/update',
                     ],
                 ],
             ],
+            // Query, Cache e Event são os watchers de maior volume. Ficam opt-in
+            // aqui também, para que um config publicado antigo (sem estas chaves)
+            // não os reative pelos defaults.
             Watchers\EventWatcher::class     => [
-                'enabled' => true,
+                'enabled' => env('MONITORING_WATCH_EVENTS', false),
                 'options' => [
                     'ignore' => [
                         Watchers\RequestWatcher::class,
@@ -189,7 +241,7 @@ class Monitoring
                 ],
             ],
             Watchers\GateWatcher::class => [
-                'enabled' => true,
+                'enabled' => env('MONITORING_WATCH_GATES', false),
                 'options' => [
                     'ignore_abilities' => [],
                 ],
@@ -234,20 +286,20 @@ class Monitoring
                 ],
             ],
             Watchers\QueryWatcher::class => [
-                'enabled' => true,
+                'enabled' => env('MONITORING_WATCH_QUERIES', false),
                 'options' => [
-                    'slow_query_threshold_ms' => 100,
+                    'slow_query_threshold_ms' => (int) env('MONITORING_SLOW_QUERY_MS', 500),
                     'ignore_patterns' => ['information_schema', 'migrations', 'telescope'],
                     'log_bindings' => true,
                     'max_sql_length' => 5000,
                 ],
             ],
             Watchers\CacheWatcher::class => [
-                'enabled' => true,
+                'enabled' => env('MONITORING_WATCH_CACHE', false),
                 'options' => [
-                    'track_hits' => true,
-                    'track_misses' => true,
-                    'ignore_keys' => ['config', 'routes', 'telescope'],
+                    'track_hits' => env('MONITORING_WATCH_CACHE_HITS', false),
+                    'track_misses' => env('MONITORING_WATCH_CACHE_MISSES', false),
+                    'ignore_keys' => ['config', 'routes', 'telescope', 'monitoring'],
                 ],
             ],
         ];
@@ -319,9 +371,25 @@ class Monitoring
             // Verifica alertas para eventos críticos
             static::checkAlerts($entry, $type);
 
+            // Teto rígido — defesa em profundidade. O caminho normal nunca passa
+            // de bufferSize, mas se o flush parar de acontecer é preferível
+            // descartar as entradas mais antigas a derrubar a aplicação.
+            $hardCap = self::$bufferSize * 10;
+            if (count(self::$buffer) > $hardCap) {
+                self::$buffer = array_slice(self::$buffer, -$hardCap);
+                static::writeInternalError('record', 'buffer_overflow', new \RuntimeException(
+                    "Buffer excedeu {$hardCap} entradas — descartando as mais antigas. " .
+                    'O flush provavelmente está falhando.'
+                ));
+            }
+
+            // Flush apenas por tamanho de buffer. O flush final é garantido pelo
+            // terminating() e pelo register_shutdown_function().
+            //
+            // Havia aqui um `elseif (App::runningInConsole()) flushBuffer()` que
+            // fazia um INSERT por evento em console — um job com 20 queries virava
+            // 20 INSERTs em vez de um batch.
             if (count(self::$buffer) >= self::$bufferSize) {
-                static::flushBuffer();
-            } elseif (App::runningInConsole()) {
                 static::flushBuffer();
             }
         } catch (\Throwable $e) {
@@ -339,7 +407,7 @@ class Monitoring
         try {
             $alertService = app(AlertService::class);
             $alertService->checkAndAlert($entry, $type);
-        } catch (\Throwable $e) {
+        } catch (\Throwable) {
             // Silencia erros de alerta para não afetar a aplicação
         }
     }
@@ -439,9 +507,7 @@ class Monitoring
 
     protected static function isTags(IncomingEntry $entry, string $type): void
     {
-        $entry->type($type)->tags(Arr::collapse(array_map(function ($tagCallback) use ($entry) {
-            return $tagCallback($entry);
-        }, static::$tagUsing)));
+        $entry->type($type)->tags(Arr::collapse(array_map(fn($tagCallback) => $tagCallback($entry), static::$tagUsing)));
     }
 
     public static function tag(Closure $callback): static

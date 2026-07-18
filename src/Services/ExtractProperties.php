@@ -9,10 +9,10 @@ use ReflectionException;
 class ExtractProperties
 {
     /** Limite de 32KB por propriedade */
-    private const MAX_PROPERTY_SIZE = 32768;
+    private const int MAX_PROPERTY_SIZE = 32768;
 
     /** Profundidade máxima de objetos aninhados */
-    private const MAX_DEPTH = 3;
+    private const int MAX_DEPTH = 3;
 
     /**
      * @throws ReflectionException
@@ -20,9 +20,8 @@ class ExtractProperties
     public static function from($target): array
     {
         try {
-            return collect((new ReflectionClass($target))->getProperties())
+            return collect(new ReflectionClass($target)->getProperties())
                 ->mapWithKeys(function ($property) use ($target) {
-                    $property->setAccessible(true);
 
                     if (PHP_VERSION_ID >= 70400 && ! $property->isInitialized($target)) {
                         return [];
@@ -52,7 +51,7 @@ class ExtractProperties
 
         if (is_object($value)) {
             return [
-                'class'      => get_class($value),
+                'class'      => $value::class,
                 'properties' => self::safeJsonSerialize($value),
             ];
         }

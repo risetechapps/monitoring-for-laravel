@@ -35,10 +35,10 @@ use Throwable;
 class ExceptionWatcher extends Watcher
 {
     /** Máximo de frames do stack trace a armazenar */
-    private const MAX_TRACE_FRAMES = 30;
+    private const int MAX_TRACE_FRAMES = 30;
 
     /** Máximo de bytes para a mensagem de exceção */
-    private const MAX_MESSAGE_LENGTH = 2000;
+    private const int MAX_MESSAGE_LENGTH = 2000;
 
     /**
      * Circuit breaker estático — impede recursão caso recordException() seja
@@ -48,7 +48,7 @@ class ExceptionWatcher extends Watcher
 
     public function register($app): void
     {
-        $app['events']->listen(MessageLogged::class, [$this, 'recordException']);
+        $app['events']->listen(MessageLogged::class, $this->recordException(...));
     }
 
     public function recordException(MessageLogged $event): void
@@ -95,7 +95,7 @@ class ExceptionWatcher extends Watcher
             }
 
             $entry = IncomingExceptionEntry::make($exception, [
-                'class'        => get_class($exception),
+                'class'        => $exception::class,
                 'file'         => $exception->getFile(),
                 'line'         => $exception->getLine(),
                 'message'      => substr($exception->getMessage(), 0, self::MAX_MESSAGE_LENGTH),
@@ -168,7 +168,7 @@ class ExceptionWatcher extends Watcher
         $ignoredMessages = $this->options['ignore_messages_containing'] ?? [];
         $message = strtolower($exception->getMessage());
         foreach ($ignoredMessages as $ignoredText) {
-            if (str_contains($message, strtolower($ignoredText))) {
+            if (str_contains($message, strtolower((string) $ignoredText))) {
                 return true;
             }
         }
@@ -177,7 +177,7 @@ class ExceptionWatcher extends Watcher
         $ignoredFiles = $this->options['ignore_files_containing'] ?? [];
         $file = $exception->getFile();
         foreach ($ignoredFiles as $ignoredPath) {
-            if (str_contains($file, $ignoredPath)) {
+            if (str_contains($file, (string) $ignoredPath)) {
                 return true;
             }
         }
