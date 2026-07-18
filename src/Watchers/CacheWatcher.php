@@ -23,16 +23,16 @@ class CacheWatcher extends Watcher
     {
         // Eventos de hit/miss
         if ($this->options['track_hits'] ?? true) {
-            $app['events']->listen(CacheHit::class, [$this, 'recordCacheHit']);
+            $app['events']->listen(CacheHit::class, $this->recordCacheHit(...));
         }
 
         if ($this->options['track_misses'] ?? true) {
-            $app['events']->listen(CacheMissed::class, [$this, 'recordCacheMiss']);
+            $app['events']->listen(CacheMissed::class, $this->recordCacheMiss(...));
         }
 
         // Eventos de escrita e deleção
-        $app['events']->listen(KeyWritten::class, [$this, 'recordCacheWrite']);
-        $app['events']->listen(KeyForgotten::class, [$this, 'recordCacheDelete']);
+        $app['events']->listen(KeyWritten::class, $this->recordCacheWrite(...));
+        $app['events']->listen(KeyForgotten::class, $this->recordCacheDelete(...));
     }
 
     /**
@@ -119,7 +119,7 @@ class CacheWatcher extends Watcher
         $ignoreKeys = $this->options['ignore_keys'] ?? [];
 
         foreach ($ignoreKeys as $pattern) {
-            if (str_contains($key, $pattern)) {
+            if (str_contains($key, (string) $pattern)) {
                 return true;
             }
         }
