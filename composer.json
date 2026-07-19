@@ -21,7 +21,7 @@
         "php": "^8.3",
         "illuminate/support": "^12.0",
         "aws/aws-sdk-php": "^3.363",
-        "hisorange/browser-detect": "^4.5",
+        "hisorange/browser-detect": "^5.0",
         "risetechapps/risetools": "^3.0.1",
         "laravel/sanctum": "^4.0",
         "tpetry/laravel-postgresql-enhanced": "^3.7.0"
