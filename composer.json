@@ -23,8 +23,8 @@
         "aws/aws-sdk-php": "^3.363",
         "hisorange/browser-detect": "^4.5",
         "risetechapps/risetools": "^3.0.1",
-        "laravel/sanctum": "^4.0"
         "laravel/sanctum": "^4.0",
+        "tpetry/laravel-postgresql-enhanced": "^3.7.0"
     },
     "require-dev": {
         "orchestra/testbench": "^10.0",
