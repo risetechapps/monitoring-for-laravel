@@ -76,7 +76,66 @@ return [
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `MONITORING_ENABLED` | `true` | Liga/desliga o monitoramento |
-| `MONITORING_DRIVER` | `single` | Driver de armazenamento |
+| `MONITORING_DRIVER` | `database` | Driver de armazenamento |
+| `MONITORING_BUFFER_SIZE` | `5` | Entradas acumuladas antes de persistir |
+| `MONITORING_WATCH_QUERIES` | `false` | Liga o QueryWatcher |
+| `MONITORING_WATCH_CACHE` | `false` | Liga o CacheWatcher |
+| `MONITORING_WATCH_CACHE_HITS` | `false` | Registra cache hits (exige o CacheWatcher ligado) |
+| `MONITORING_WATCH_CACHE_MISSES` | `false` | Registra cache misses (exige o CacheWatcher ligado) |
+| `MONITORING_WATCH_EVENTS` | `false` | Liga o EventWatcher |
+| `MONITORING_WATCH_GATES` | `false` | Liga o GateWatcher |
+| `MONITORING_SLOW_QUERY_MS` | `500` | Threshold de query lenta (ms) |
+| `MONITORING_RETENTION_DISK` | `local` | Disco do Storage para os backups da retenção |
+| `MONITORING_RETENTION_AUTO_SCHEDULE` | `true` | Agenda a limpeza automática |
+| `MONITORING_RETENTION_DAYS` | `30` | Retenção padrão (fallback por tipo) |
+
+---
+
+## Volume de dados — leia antes de ligar tudo
+
+Cada evento capturado é uma linha no banco. Três watchers geram um volume
+desproporcional ao valor que entregam e por isso vêm **desligados por padrão**:
+
+| Watcher | Por que é opt-in |
+|---|---|
+| `CacheWatcher` | Uma linha **por operação de cache**. Uma request com Redis faz centenas delas. |
+| `QueryWatcher` | Uma linha por query acima do threshold. Volume alto em qualquer app com tráfego. |
+| `EventWatcher` | Escuta `*` e faz reflection do payload de todo evento emitido. |
+| `GateWatcher` | Uma linha **por checagem de permissão**, cada uma resolvendo um backtrace. Uma listagem com policy por item gera uma entrada por item. |
+
+Ligue-os pontualmente, para investigar um problema específico, e desligue depois:
+
+```env
+MONITORING_WATCH_QUERIES=true
+MONITORING_SLOW_QUERY_MS=500
+```
+
+Para taxa de acerto de cache, prefira uma métrica agregada a uma linha por
+operação:
+
+```php
+monitoring()->increment('cache_hit');   // em vez de MONITORING_WATCH_CACHE_HITS
+```
+
+### Workers de fila
+
+O monitoramento é desligado automaticamente em `queue:work`, `queue:listen`,
+`horizon`, `horizon:work`, `horizon:supervisor` e `schedule:work`, independente
+de `MONITORING_ENABLED`. Um worker processa um volume de eventos que não
+corresponde a tráfego de usuário — cada job arrasta suas queries, eventos e
+operações de cache — e inundaria a tabela sem gerar sinal útil.
+
+`schedule:run` (execução pontual do cron) continua monitorado. Octane
+(`octane:start`) também: seus workers atendem requisições HTTP normais.
+
+### Retenção
+
+A limpeza automática vem **ligada** (`MONITORING_RETENTION_AUTO_SCHEDULE=true`).
+Sem ela a tabela `monitoring` cresce indefinidamente.
+
+> ⚠️ A retenção usa o Scheduler do Laravel. Confirme que existe um container
+> rodando `schedule:work` (ou um cron chamando `schedule:run`) — sem isso ela
+> nunca dispara e a tabela cresce em silêncio.
 
 ---
 
@@ -143,13 +202,33 @@ Monitora todas as requisições HTTP recebidas pela aplicação.
     'options' => [
         'ignore_http_methods' => ['options'],   // Ignora métodos HTTP específicos
         'ignore_status_codes' => [404],         // Ignora códigos de status HTTP
-        'ignore_paths' => ['telescope', 'horizon'], // Ignora paths específicos
+        'ignore_paths' => ['up', 'telescope*'], // Padrões GLOB (ver abaixo)
         'size_limit' => 64,                     // Limite de tamanho da resposta em KB
     ],
 ],
 ```
 
+> **`ignore_paths` usa glob, não substring.** `'up'` casa apenas com `/up`;
+> para prefixo use `'up*'`. Até a v3 o casamento era por substring, e o padrão
+> `'up'` silenciosamente excluía do monitoramento qualquer rota que contivesse
+> "up" — `/api/upload`, `/signup`, `/support`, `/groups`. Se você tinha padrões
+> curtos no `ignore_paths`, revise-os: eles podem estar excluindo mais do que
+> você imagina.
+
 > **Segurança:** Os campos `password`, `password_confirmation`, `authorization` e `php-auth-pw` são automaticamente mascarados como `********`.
+
+> **Redação do corpo da resposta (v4.0.0):** por padrão o corpo da resposta é
+> gravado como veio. Para mascarar segredos no corpo (ex.: `access_token` numa
+> resposta de login), declare as chaves em `hidden_response_parameters` — suporta
+> dot-notation para chaves aninhadas:
+>
+> ```php
+> // config/monitoring.php
+> 'hidden_response_parameters' => ['data.access_token', 'data.token', 'token'],
+> ```
+>
+> Ou em runtime: `Monitoring::$hiddenResponseParameters = ['data.access_token'];`.
+> Vale também para o `ClientRequestWatcher` (respostas de HTTP de saída).
 
 ---
 
@@ -184,13 +263,15 @@ Captura exceções registradas via `Log::error()`, `Log::critical()` e similares
 
 Registra os eventos disparados na aplicação, excluindo eventos internos do framework por padrão.
 
+> **Desligado por padrão** (`MONITORING_WATCH_EVENTS`). Ver [Volume de dados](#volume-de-dados--leia-antes-de-ligar-tudo).
+
 **Dados coletados:** nome do evento, payload formatado, lista de listeners e indicação se o evento é broadcast.
 
 **Opções:**
 
 ```php
 \RiseTechApps\Monitoring\Watchers\EventWatcher::class => [
-    'enabled' => true,
+    'enabled' => env('MONITORING_WATCH_EVENTS', false),
     'options' => [
         'ignore' => [
             'App\Events\MeuEventoInterno',
@@ -379,16 +460,20 @@ Monitora requisições HTTP feitas _pela_ aplicação usando o `Http::` facade d
 
 Monitora automaticamente queries SQL que excedem um tempo limite configurado.
 
+> **Desligado por padrão** (`MONITORING_WATCH_QUERIES`). Ver [Volume de dados](#volume-de-dados--leia-antes-de-ligar-tudo).
+
 **Dados coletados:** SQL completo, bindings, tempo de execução, conexão utilizada, arquivo e linha de origem.
+
+As queries do próprio monitoring são ignoradas automaticamente.
 
 **Opções:**
 
 ```php
 \RiseTechApps\Monitoring\Watchers\QueryWatcher::class => [
-    'enabled' => true,
+    'enabled' => env('MONITORING_WATCH_QUERIES', false),
     'options' => [
         // Threshold em ms para considerar query lenta
-        'slow_query_threshold_ms' => 100,
+        'slow_query_threshold_ms' => 500,
         // Padrões de SQL que devem ser ignorados
         'ignore_patterns' => ['information_schema', 'migrations', 'telescope'],
         // Logar bindings das queries
@@ -415,20 +500,23 @@ GET /monitoring/search?q=SELECT * FROM orders
 
 Monitora hits, misses, escritas e deleções no cache da aplicação.
 
+> **Desligado por padrão** (`MONITORING_WATCH_CACHE`) — é o watcher de maior
+> volume do pacote. Ver [Volume de dados](#volume-de-dados--leia-antes-de-ligar-tudo).
+
 **Dados coletados:** operação (hit/miss/write/delete), key, store (redis/memcached/file), TTL (para writes).
 
 **Opções:**
 
 ```php
 \RiseTechApps\Monitoring\Watchers\CacheWatcher::class => [
-    'enabled' => true,
+    'enabled' => env('MONITORING_WATCH_CACHE', false),
     'options' => [
-        // Registrar cache hits
-        'track_hits' => true,
+        // Registrar cache hits — os de maior volume e menor valor individual
+        'track_hits' => env('MONITORING_WATCH_CACHE_HITS', false),
         // Registrar cache misses
-        'track_misses' => true,
+        'track_misses' => env('MONITORING_WATCH_CACHE_MISSES', false),
         // Chaves de cache que devem ser ignoradas
-        'ignore_keys' => ['config', 'routes', 'telescope'],
+        'ignore_keys' => ['config', 'routes', 'telescope', 'monitoring'],
     ],
 ],
 ```
@@ -1039,7 +1127,7 @@ Monitoring::routes([
 
 | Método | URI | Nome | Descrição |
 |---|---|---|---|
-| `GET` | `/monitoring/search` | `monitoring.search` | Busca full-text nos eventos |
+| `GET` | `/monitoring/search` | `monitoring.search` | Busca por substring (parâmetro `days` limita a janela, padrão 30) |
 | `GET` | `/monitoring/compare` | `monitoring.compare` | Compara métricas entre dois períodos |
 
 **Rotas de Resolução de Exceções:**
@@ -1385,6 +1473,12 @@ GET /monitoring/health
 ## Sistema de Alertas
 
 Configure notificações automáticas para eventos críticos via Slack, Discord ou Email.
+
+> **Envio assíncrono (v4.0.0):** o envio das notificações padrão (Slack/Discord/Email)
+> passou a ser **enfileirado** (`SendMonitoringAlertJob`), fora do caminho da request —
+> antes ia síncrono, atrasando justamente a requisição que disparou o alerta.
+> **Requer um worker de fila ativo.** Se `QUEUE_CONNECTION=sync`, o envio roda inline
+> (comportamento anterior). O cooldown (`cooldown_minutes`) segue valendo.
 
 ### Configuração
 
