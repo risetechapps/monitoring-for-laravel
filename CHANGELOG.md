@@ -5,6 +5,28 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [4.0.0] — 2026-07-18
+
+### 🔒 Segurança
+- **Corpo da resposta HTTP era gravado CRU** no `RequestWatcher`: a redação usava lista vazia (`hideParameters($decoded, [])`), então um corpo com segredo (ex.: resposta de login com `access_token`) ficava exposto na tabela de monitoramento. Agora redige via nova config `monitoring.hidden_response_parameters` + o registro estático `Monitoring::$hiddenResponseParameters` (suporta dot-notation, ex.: `data.access_token`). Vazio = comportamento anterior (retrocompatível).
+
+### ⚡ Performance
+- **Alertas (Slack/Discord/Email) agora são enfileirados** (`SendMonitoringAlertJob`) em vez de enviados de forma **síncrona dentro da request**. Antes, um alerta (ex.: "requisição lenta") disparava 2 POST de webhook + e-mail no caminho da resposta — atrasando justamente a request já lenta. O I/O externo saiu do request-path; ganhou também `Http::timeout(10)`.
+- **`Loggly::resolveCaller()` mais barato e confiável**: passou a ler a origem (classe/função) direto dos frames da pilha em vez de derivar a classe pelo caminho do arquivo. Removeu o parsing de path e o loop de matching; além de mais rápido, agora resolve corretamente logs originados em **package/vendor** (antes qualquer log fora de `app/` virava `anonymous`, perdendo classe e função).
+
+### 🐛 Corrigido
+- `Loggly::writeToFile()` (fallback de log): o `catch` chamava `Log::info(...)` — que reentra no sistema de eventos (`MessageLogged → ExceptionWatcher`) justamente no caminho que deveria silenciar — e tinha um `;` duplo. Trocado por `error_log()` nativo (não dispara eventos Laravel).
+- Removido o método morto `MonitoringQueryService::getRetentionCandidateIds()` (nunca era chamado e continha um `yield` inócuo dentro do callback do `chunk()`).
+- **Chave de conexão inconsistente entre migrations**: `create_monitorings_table` e `add_resolved_fields` liam `config('monitoring.drivers.db_connection')` (chave inexistente → conexão default), enquanto `add_indexes` e `add_trgm` liam a chave correta `monitoring.drivers.database.connection`. Num setup com conexão de monitoring dedicada (≠ default), a tabela e os campos `resolved_at`/`resolved_by` iriam para o banco errado — quebrando `resolveEvent()`/`getUnresolvedExceptions()`. As 4 migrations agora usam a mesma chave.
+
+### 🗄️ Migrations
+- `add_trgm_search_index`: criação da extensão via `Tpetry\PostgresqlEnhanced\Support\Facades\Schema::createExtensionIfNotExists('pg_trgm')` (mais legível/idempotente). Adicionado `SET maintenance_work_mem = '256MB'` na sessão antes do build do GIN para acelerar a criação em tabelas grandes (session-scoped, ajustável, com fallback se não houver permissão). Índices seguem `CONCURRENTLY` (não travam escrita).
+
+### 📝 Nota de dependência
+- A captura de device/GeoIP por request (via `IncomingEntry` → `RiseTools\Device::info()`) depende do package RiseTools. A chamada externa de GeoIP (ip-api) passou a ter **timeout + cache por IP** no RiseTools — mantendo o custo fora do caminho da request. Garanta o RiseTools atualizado.
+
+---
+
 ## [3.0.0] — 2026-04-28
 
 ### ✨ Adicionado
