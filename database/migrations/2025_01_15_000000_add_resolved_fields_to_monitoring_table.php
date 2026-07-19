@@ -31,7 +31,7 @@ return new class extends Migration
      */
     public function getConnection(): ?string
     {
-        return config('monitoring.drivers.db_connection');
+        return config('monitoring.drivers.database.connection');
     }
 
     /**
