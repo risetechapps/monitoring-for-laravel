@@ -31,6 +31,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Parâmetros ocultos no corpo da resposta
+    |--------------------------------------------------------------------------
+    |
+    | Chaves redigidas ('********') do corpo da resposta HTTP antes de gravar no
+    | monitoring — evita persistir segredos (ex.: token de login). Suporta
+    | dot-notation para chaves aninhadas. Também aceita registro em runtime via
+    | Monitoring::$hiddenResponseParameters. Vazio = nada redigido.
+    |
+    | Ex.: ['data.access_token', 'data.token', 'token']
+    */
+    'hidden_response_parameters' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Watchers ativos
     |--------------------------------------------------------------------------
     */
@@ -40,12 +54,16 @@ return [
             'options' => [
                 'ignore_http_methods' => ['options'],
                 'ignore_status_codes' => [],
-                'ignore_paths'        => ['telescope', 'telescope-api', 'up'],
+                // Padrões glob, não substring. `up` casa só com /up (o health
+                // check do Laravel); use `up*` se quiser prefixo.
+                'ignore_paths'        => ['telescope*', 'telescope-api*', 'up'],
                 'size_limit'          => (int) env('MONITORING_RESPONSE_SIZE_LIMIT_KB', 32),
             ],
         ],
+        // Escuta '*' — toda emissão de evento passa por reflection do payload e
+        // resolução de listeners. Alto volume e alto custo por evento: opt-in.
         \RiseTechApps\Monitoring\Watchers\EventWatcher::class => [
-            'enabled' => true,
+            'enabled' => env('MONITORING_WATCH_EVENTS', false),
             'options' => [
                 'ignore' => [],
             ],
@@ -78,8 +96,10 @@ return [
                 ],
             ],
         ],
+        // Uma linha por checagem de permissão. Uma listagem com policy por item
+        // gera uma entrada por item, e cada uma resolve um backtrace: opt-in.
         \RiseTechApps\Monitoring\Watchers\GateWatcher::class => [
-            'enabled' => true,
+            'enabled' => env('MONITORING_WATCH_GATES', false),
             'options' => [
                 'ignore_abilities' => [],
             ],
@@ -153,11 +173,13 @@ return [
                 'size_limit'   => 64,
             ],
         ],
+        // Uma entrada por query lenta. Em app com tráfego o volume é enorme e o
+        // threshold baixo captura queries que não são problema: opt-in.
         \RiseTechApps\Monitoring\Watchers\QueryWatcher::class => [
-            'enabled' => true,
+            'enabled' => env('MONITORING_WATCH_QUERIES', false),
             'options' => [
                 // Threshold em ms para considerar query lenta
-                'slow_query_threshold_ms' => (int) env('MONITORING_SLOW_QUERY_MS', 100),
+                'slow_query_threshold_ms' => (int) env('MONITORING_SLOW_QUERY_MS', 500),
                 // Padrões de SQL que devem ser ignorados
                 'ignore_patterns' => ['information_schema', 'migrations', 'telescope'],
                 // Logar bindings das queries
@@ -166,15 +188,19 @@ return [
                 'max_sql_length' => 5000,
             ],
         ],
+        // Uma entrada POR OPERAÇÃO de cache. Uma request com Redis faz centenas
+        // delas — é o watcher de maior volume do pacote: opt-in.
         \RiseTechApps\Monitoring\Watchers\CacheWatcher::class => [
-            'enabled' => true,
+            'enabled' => env('MONITORING_WATCH_CACHE', false),
             'options' => [
-                // Registrar cache hits
-                'track_hits' => true,
-                // Registrar cache misses
-                'track_misses' => true,
-                // Chaves de cache que devem ser ignoradas
-                'ignore_keys' => ['config', 'routes', 'telescope'],
+                // Hits e misses são os de maior volume e menor valor individual.
+                // Para hit rate, prefira um counter agregado a uma linha por operação.
+                'track_hits' => env('MONITORING_WATCH_CACHE_HITS', false),
+                'track_misses' => env('MONITORING_WATCH_CACHE_MISSES', false),
+                // Chaves de cache que devem ser ignoradas.
+                // 'monitoring' evita que o próprio pacote gere entradas de cache
+                // ao gravar suas métricas de performance.
+                'ignore_keys' => ['config', 'routes', 'telescope', 'monitoring'],
             ],
         ],
     ],
@@ -208,21 +234,35 @@ return [
     |
     */
     'retention' => [
-        'auto_schedule' => env('MONITORING_RETENTION_AUTO_SCHEDULE', false),
-        'days'          => (int) env('MONITORING_RETENTION_DAYS', 90),
+        // Ligado por padrão: sem isso a tabela `monitoring` cresce indefinidamente.
+        // Requer um container rodando `schedule:work` (ou cron chamando schedule:run).
+        'auto_schedule' => env('MONITORING_RETENTION_AUTO_SCHEDULE', true),
+        'days'          => (int) env('MONITORING_RETENTION_DAYS', 30),
         'format'        => env('MONITORING_RETENTION_FORMAT', 'json'),
         'disk'          => env('MONITORING_RETENTION_DISK', 'local'),
         'time'          => env('MONITORING_RETENTION_TIME', '02:00'),
         'chunk_size'    => (int) env('MONITORING_RETENTION_CHUNK', 500),
 
-        // Política de retenção granular por tipo
+        // Política de retenção granular por tipo.
+        // Precisa ter uma chave para cada tipo em RetentionService::TYPE_MAPPING —
+        // tipo sem política aqui cai no padrão global 'days'; tipo ausente do
+        // TYPE_MAPPING nunca é podado.
         'granular' => [
-            'exceptions' => (int) env('MONITORING_RETENTION_EXCEPTIONS', 90),
-            'requests'   => (int) env('MONITORING_RETENTION_REQUESTS', 30),
-            'jobs'       => (int) env('MONITORING_RETENTION_JOBS', 60),
-            'queries'    => (int) env('MONITORING_RETENTION_QUERIES', 7),
-            'cache'      => (int) env('MONITORING_RETENTION_CACHE', 7),
-            'metrics'    => (int) env('MONITORING_RETENTION_METRICS', 30),
+            'exceptions'      => (int) env('MONITORING_RETENTION_EXCEPTIONS', 90),
+            'requests'        => (int) env('MONITORING_RETENTION_REQUESTS', 30),
+            'jobs'            => (int) env('MONITORING_RETENTION_JOBS', 60),
+            'queries'         => (int) env('MONITORING_RETENTION_QUERIES', 7),
+            'cache'           => (int) env('MONITORING_RETENTION_CACHE', 7),
+            'metrics'         => (int) env('MONITORING_RETENTION_METRICS', 30),
+            'events'          => (int) env('MONITORING_RETENTION_EVENTS', 7),
+            'logs'            => (int) env('MONITORING_RETENTION_LOGS', 30),
+            'models'          => (int) env('MONITORING_RETENTION_MODELS', 90),
+            'mails'           => (int) env('MONITORING_RETENTION_MAILS', 30),
+            'notifications'   => (int) env('MONITORING_RETENTION_NOTIFICATIONS', 30),
+            'gates'           => (int) env('MONITORING_RETENTION_GATES', 7),
+            'commands'        => (int) env('MONITORING_RETENTION_COMMANDS', 30),
+            'schedules'       => (int) env('MONITORING_RETENTION_SCHEDULES', 30),
+            'client_requests' => (int) env('MONITORING_RETENTION_CLIENT_REQUESTS', 30),
         ],
         // Manter exceções não resolvidas além do prazo
         'keep_unresolved' => env('MONITORING_KEEP_UNRESOLVED', true),
@@ -246,7 +286,7 @@ return [
         // Email
         'email' => [
             'enabled'  => env('MONITORING_ALERTS_EMAIL_ENABLED', false),
-            'to'       => explode(',', env('MONITORING_ALERTS_EMAIL_TO', '')),
+            'to'       => explode(',', (string) env('MONITORING_ALERTS_EMAIL_TO', '')),
             'from'     => env('MONITORING_ALERTS_EMAIL_FROM', config('mail.from.address')),
         ],
 
@@ -352,7 +392,7 @@ return [
         'channels' => [
             'email' => [
                 'enabled' => env('MONITORING_REPORT_EMAIL_ENABLED', true),
-                'to' => explode(',', env('MONITORING_REPORT_EMAIL_TO', '')),
+                'to' => explode(',', (string) env('MONITORING_REPORT_EMAIL_TO', '')),
                 'from' => env('MONITORING_REPORT_EMAIL_FROM', config('mail.from.address')),
                 'subject_prefix' => env('MONITORING_REPORT_SUBJECT_PREFIX', '[MONITORING]'),
             ],
