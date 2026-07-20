@@ -5,6 +5,9 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [4.0.1] - 2026-07-20
+- Implementado verificação se coluna existe na tabela
+
 ## [4.0.0] — 2026-07-18
 
 ### 🔒 Segurança
