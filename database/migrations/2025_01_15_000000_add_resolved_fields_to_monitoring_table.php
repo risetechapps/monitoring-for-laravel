@@ -41,13 +41,27 @@ return new class extends Migration
      */
     public function up(): void
     {
-        if ($this->schema->hasTable('monitoring')) {
-            $this->schema->table('monitoring', function (Blueprint $table) {
-                // Adiciona campo para marcar quando a exceção foi resolvida
+        if (! $this->schema->hasTable('monitoring')) {
+            return;
+        }
+
+        // Idempotente: tenants que já receberam as colunas (migração parcial anterior)
+        // não podem estourar "Duplicate column". Adiciona só o que falta.
+        $this->schema->table('monitoring', function (Blueprint $table) {
+            if (! $this->schema->hasColumn('monitoring', 'resolved_at')) {
+                // Marca quando a exceção foi resolvida
                 $table->timestamp('resolved_at')->nullable()->after('device');
-                // Adiciona campo para rastrear quem resolveu (user_id ou nome)
+            }
+
+            if (! $this->schema->hasColumn('monitoring', 'resolved_by')) {
+                // Rastreia quem resolveu (user_id ou nome)
                 $table->string('resolved_by')->nullable()->after('resolved_at');
-                // Adiciona índice para consultas rápidas
+            }
+        });
+
+        // Índice para consultas rápidas — só cria se ainda não existir
+        if (! $this->schema->hasIndex('monitoring', ['resolved_at'])) {
+            $this->schema->table('monitoring', function (Blueprint $table) {
                 $table->index('resolved_at');
             });
         }
@@ -60,10 +74,24 @@ return new class extends Migration
      */
     public function down(): void
     {
-        if ($this->schema->hasTable('monitoring')) {
+        if (! $this->schema->hasTable('monitoring')) {
+            return;
+        }
+
+        if ($this->schema->hasIndex('monitoring', ['resolved_at'])) {
             $this->schema->table('monitoring', function (Blueprint $table) {
                 $table->dropIndex(['resolved_at']);
-                $table->dropColumn(['resolved_at', 'resolved_by']);
+            });
+        }
+
+        $columns = array_values(array_filter(
+            ['resolved_at', 'resolved_by'],
+            fn (string $column) => $this->schema->hasColumn('monitoring', $column)
+        ));
+
+        if ($columns !== []) {
+            $this->schema->table('monitoring', function (Blueprint $table) use ($columns) {
+                $table->dropColumn($columns);
             });
         }
     }
