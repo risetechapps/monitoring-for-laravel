@@ -5,6 +5,52 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
+## [5.0.0]
+
+### 🧾 Listagem paginada
+- `GET /monitoring` agora pagina de verdade e responde no formato da tabela do painel (`data`, `recordsTotal`, `current_page`...). Antes devolvia só os itens da página, sem total, e o `search` era ignorado quando vinha junto com outro filtro. Aceita `type`, `from`/`to`, `unresolved`, `search` (sem `from`, nos últimos 30 dias), `tenant_id`, `sort_column`/`sort_direction` (lista fechada: `created_at`, `type`) e `page`/`pagesize` (teto 200). **Breaking** no formato da resposta (nenhum consumidor registrado).
+- Novo `MonitoringRepositoryInterface::paginateEvents()` e `MonitoringQueryService::paginate()` / `scopeContentSearch()`.
+
+### 🐛 Corrigido
+- `GET /monitoring/{id}`, `/type/{type}`, `/search`, `POST /tags`, `/user/{id}` e `/exceptions/unresolved` respondiam **500**: passavam `Collection` ao `jsonSuccess`, que no risetools só aceita `array|JsonResource|null`.
+- ⚠️ Pendente: `/exceptions/unresolved` usa `JSON_UNQUOTE/JSON_EXTRACT` (só MySQL) e falha em PostgreSQL/SQLite.
+
+### 🔒 Segurança
+- **Senha digitada ia em texto puro para o banco**: `Loggly::withRequest($request)` fazia `(array) $request`, que despeja as propriedades internas do objeto — inclusive o corpo cru (`content`). O AuthFlow loga "Invalid email or password" (e conta bloqueada/não verificada, onde a senha é a correta) com `withRequest`. Agora grava só método, URI e input.
+- **Ocultação central (`Support\Redactor`)** aplicada em `IncomingEntry::toArray()` — toda entrada passa por ali. Antes o `RequestWatcher` escondia só `password`/`password_confirmation` (gravava `old_password`, `recovery_code`, `token`), a lista de resposta vinha vazia (gravava o `access_token` de todo login) e o `ClientRequestWatcher` não ocultava nada do HTTP de saída (OAuth `client_secret`/`refresh_token`/`access_token`). Padrões configuráveis em `monitoring.redact`; URLs com `?token=`/`?signature=` também.
+- `MailWatcher` não grava mais o corpo por padrão (`record_html`): e-mail de redefinição/primeiro acesso carrega link com token e código em texto livre.
+- **Rotas autenticadas por padrão**: `Monitoring::routes()` sem opções usava só o middleware `api`. Agora `['api', 'auth:sanctum']`. **Breaking** para quem dependia das rotas abertas.
+- Novo comando `monitoring:redact` para ocultar o que já foi gravado (`--dry-run`, `--days`, `--force`; irreversível).
+
+### ⚡ Performance
+- **GeoIP fora do caminho do request**: o device de cada entrada chamava o ip-api (HTTP, até 6s) na primeira entrada do request — antes da resposta ir ao cliente. Agora `monitoring.device.geo_ip` (padrão `false`). Requer `risetools` >= 3.1 (com versões antigas o argumento é ignorado e o geo continua).
+- **Métricas de performance atômicas no Redis**: cada request fazia `get` + `put` de um array de até 500 amostras (ler-modificar-gravar, perdendo requisições sob concorrência). Agora um script Lua incrementa um hash da janela (uma ida ao Redis, com TTL); percentis por histograma. Stores não-Redis mantêm o caminho antigo.
+- **Métricas e geo fora do prefixo de tenant**: com tenancy, o Cache facade separava a chave por tenant/filial/usuário e o `/health` lia uma janela quase vazia. O store é resolvido direto da config (`monitoring.cache_store`).
+- **Busca por tags pelo índice GIN**: `tags->>? = ?` (chave como parâmetro) não casava com índice nenhum. Agora contenção jsonb (`tags::jsonb @> ...`), aceitando valor texto ou numérico.
+- Migration remove `monitoring_tags_user_id_idx` e `monitoring_tags_trgm_idx` (sem uso; custavam escrita em todo INSERT).
+- **Nenhum INSERT no caminho do request HTTP**: o buffer só vai para o banco no `terminating()`, depois da resposta, em INSERTs multi-linha (`insert_chunk_size`, 200). Antes o flush por tamanho (buffer 5) rodava durante o request — num request do FinanceCore com ~450 eventos eram 89 INSERTs, ~540ms de 623ms de banco. Teto de memória: `http_max_buffer` (1000).
+- `buffer_size` padrão 5 → 20 (agora só vale para console/worker).
+- Teto de memória do HTTP também em bytes: `http_max_buffer_mb` (8).
+
+### 🏷️ Tags globais
+- Novo `Monitoring::registerTagResolver(Closure)`: registra uma função de tags avaliada a cada entrada (com o contexto daquele instante). `Monitoring::tag()` fica obsoleto e deixou de fazer `new static(...)` — o construtor religava o monitoring desligado e quebrava (propriedade estática não inicializada) onde o monitoring não sobe.
+- **Driver `single` quebrado**: `MonitoringRepositorySingle` não implementava `getTimelineByTag()` da interface — qualquer uso de `MONITORING_DRIVER=single` dava erro fatal. Implementado (retorna vazio, como as demais consultas do driver de arquivo).
+
+### 🛡️ Nenhum log perdido — rascunho em disco
+- Cada entrada é anexada no ato a um `.jsonl` do processo (`Support\Spool`, `monitoring.spool`). Gravou no banco → o arquivo é zerado; banco fora → o arquivo fica (com `fsync`); processo morto (SIGKILL, OOM, timeout do FPM, deploy) → o arquivo fica, com a trava `flock` liberada pelo SO.
+- Novo `monitoring:spool-recover`, agendado a cada minuto: grava no banco os arquivos sem dono e os apaga. Idempotente (`insertOrIgnore` por `uuid` único).
+- A gravação passou a usar `insertOrIgnore` também no flush normal.
+- Em Docker, a pasta precisa ser um volume compartilhado pelos containers do serviço (incluindo o scheduler). Os docker-compose do ecossistema já montam `monitoring_spool`.
+
+### 🐛 Corrigido
+- **Workers não gravavam nada**: em `horizon`/`queue:work` o monitoring era desligado por inteiro — `logglyError()` dentro de job e job que falhou sumiam, e o `JobWatcher` nunca rodava em produção. Agora há o modo worker (`monitoring.workers`): Loggly + exceções + jobs falhos, batch e flush por job.
+- **Logs perdidos em rollback**: o flush por tamanho podia cair no meio de um `DB::beginTransaction()` na mesma conexão e ir embora no rollback. Agora o flush espera a transação fechar.
+- **Retenção apagava ~metade por execução**: `chunk()` (OFFSET) apagando dentro do laço pulava um lote a cada página. Agora `chunkById`. Nova opção `retention.export` para não exportar ao disco (o `local` de container é efêmero).
+- **Processo longo num batch só** (listener de eventos, daemon): o batch automático expira após `batch_max_age_seconds`; console também grava por tempo (`flush_interval_seconds`).
+
+### 🧪 Testes
+- Suíte PHPUnit (Testbench) — SQLite, PostgreSQL e Redis locais. Ver README → Testes.
+
 ## [4.0.1] - 2026-07-20
 - Implementado verificação se coluna existe na tabela
 
