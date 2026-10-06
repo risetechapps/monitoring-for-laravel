@@ -36,6 +36,26 @@ class RedactionTest extends TestCase
         $this->assertSame(Redactor::MASK, $entry->content['request']['input']['password']);
     }
 
+    public function test_logging_a_request_whose_upload_was_already_moved_does_not_throw(): void
+    {
+        // Upload de mídia: o arquivo sai do /tmp para o storage e SÓ DEPOIS o
+        // controller loga com withRequest(). O getSize() no temporário lançava
+        // RuntimeException ("stat failed") e o log derrubava a request com 500.
+        $tmp = tempnam(sys_get_temp_dir(), 'upl');
+        file_put_contents($tmp, str_repeat('x', 2048));
+        $file = new \Illuminate\Http\UploadedFile($tmp, 'foto.jpeg', 'image/jpeg', null, true);
+
+        $request = Request::create('/api/v1/uploads', 'POST', ['collection' => 'profile'], [], ['file' => $file]);
+        unlink($tmp);
+
+        logglyInfo()->withRequest($request)->log('Successful loaded upload');
+        Monitoring::flushAll();
+
+        $entry = $this->storedEntries('log')[0];
+        $this->assertSame('foto.jpeg', $entry->content['request']['input']['file']['name']);
+        $this->assertNull($entry->content['request']['input']['file']['size_kb']);
+    }
+
     public function test_request_watcher_hides_login_token_sensitive_payload_and_query(): void
     {
         Route::post('/api/login', fn () => response()->json([

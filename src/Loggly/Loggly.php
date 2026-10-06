@@ -166,8 +166,31 @@ class Loggly
      */
     public function withRequest(mixed $request): static
     {
-        $this->request = $this->describeRequest($request);
+        // Log nunca derruba a requisição: falha ao descrever = log sem o request.
+        try {
+            $this->request = $this->describeRequest($request);
+        } catch (\Throwable) {
+            $this->request = null;
+        }
+
         return $this;
+    }
+
+    /**
+     * Tamanho do arquivo enviado, ou null se ele já não está no /tmp.
+     *
+     * O log costuma vir DEPOIS de o arquivo ser movido para o storage (ex.: o
+     * upload de mídia registra o sucesso após mover). getSize() faz stat no
+     * caminho temporário e lançava RuntimeException — o log derrubava a
+     * requisição com 500, inclusive no catch que tentava registrar o erro.
+     */
+    private static function fileSizeKb(\Symfony\Component\HttpFoundation\File\UploadedFile $file): ?float
+    {
+        try {
+            return $file->isFile() ? round(($file->getSize() ?: 0) / 1024, 1) : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function describeRequest(mixed $request): ?array
@@ -184,7 +207,7 @@ class Loggly
             array_walk_recursive($input, function (&$value) {
                 if ($value instanceof \SplFileInfo) {
                     $value = $value instanceof \Symfony\Component\HttpFoundation\File\UploadedFile
-                        ? ['name' => $value->getClientOriginalName(), 'size_kb' => round(($value->getSize() ?: 0) / 1024, 1)]
+                        ? ['name' => $value->getClientOriginalName(), 'size_kb' => self::fileSizeKb($value)]
                         : ['name' => $value->getFilename()];
                 }
             });
