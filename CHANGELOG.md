@@ -5,7 +5,12 @@ O formato segue o padrão [Keep a Changelog](https://keepachangelog.com/pt-BR/1.
 
 ---
 
-## [5.0.0]
+## [5.0.1] - 2026-10-06
+
+### 🐛 Corrigido
+- **Log derrubava a requisição de upload (500)**: `Loggly::withRequest()` descrevia o arquivo enviado com `getSize()`, que faz `stat` no temporário do PHP. Como o log costuma vir depois de o arquivo ser movido para o storage (ex.: upload de mídia), lançava `RuntimeException` ("stat failed") — e o catch que logava o erro com `withRequest()` estourava de novo. Agora o tamanho fica `null` quando o temporário não existe e `withRequest()` nunca lança.
+
+## [5.0.0] - 2026-10-06
 
 ### 🧾 Listagem paginada
 - `GET /monitoring` agora pagina de verdade e responde no formato da tabela do painel (`data`, `recordsTotal`, `current_page`...). Antes devolvia só os itens da página, sem total, e o `search` era ignorado quando vinha junto com outro filtro. Aceita `type`, `from`/`to`, `unresolved`, `search` (sem `from`, nos últimos 30 dias), `tenant_id`, `sort_column`/`sort_direction` (lista fechada: `created_at`, `type`) e `page`/`pagesize` (teto 200). **Breaking** no formato da resposta (nenhum consumidor registrado).
