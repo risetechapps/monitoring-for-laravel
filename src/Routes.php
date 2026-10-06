@@ -13,7 +13,9 @@ class Routes
     public static function register(array $options = []): void
     {
         $prefix     = 'monitoring';
-        $middleware = Arr::wrap($options['middleware'] ?? 'api');
+        // Padrão AUTENTICADO: estas rotas expõem payloads, respostas e logs de
+        // toda a aplicação. Quem precisar de outro guard passa 'middleware'.
+        $middleware = Arr::wrap($options['middleware'] ?? ['api', 'auth:sanctum']);
         $middleware[] = 'monitoring.disable';
 
         if (!is_array($middleware)) {

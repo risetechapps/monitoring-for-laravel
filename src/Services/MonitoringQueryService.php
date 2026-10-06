@@ -85,8 +85,22 @@ class MonitoringQueryService
         $driver = DB::connection($this->connection)->getDriverName();
 
         if ($driver === 'pgsql') {
-            // Usa o índice de expressão criado na migration de otimização
-            $query->whereRaw("tags->>? = ?", [$key, $value]);
+            // Contenção jsonb: usa o índice GIN `monitoring_tags_gin_idx`
+            // ((tags::jsonb)). O antigo `tags->>? = ?`, com a chave como
+            // parâmetro, não casava com índice nenhum — varria a tabela.
+            // O valor pode ter sido gravado como texto ou número (ex.: user_id
+            // inteiro), então as duas formas são aceitas.
+            $candidates = [json_encode([$key => $value])];
+
+            if (is_numeric($value) && (string) ($value + 0) === $value) {
+                $candidates[] = json_encode([$key => $value + 0]);
+            }
+
+            $query->where(function ($q) use ($candidates) {
+                foreach ($candidates as $candidate) {
+                    $q->orWhereRaw('tags::jsonb @> ?::jsonb', [$candidate]);
+                }
+            });
         } else {
             // MySQL / MariaDB — aproveita a coluna virtual `tags_user_id` quando key = user_id
             if ($key === 'user_id') {
@@ -301,8 +315,11 @@ class MonitoringQueryService
             $query->whereNotNull('resolved_at');
         }
 
-        $query->orderBy('created_at', 'ASC')
-            ->chunk($chunkSize, $callback);
+        // chunkById, NÃO chunk(): o callback apaga as linhas do lote, e o chunk()
+        // pagina por OFFSET — a cada página o offset pulava um lote inteiro do
+        // que sobrou, e cada execução apagava só ~metade do elegível. O id é
+        // UUID v7 (ordenável pelo tempo), então a ordem continua cronológica.
+        $query->chunkById($chunkSize, $callback, 'id');
     }
 
     /**
@@ -333,31 +350,100 @@ class MonitoringQueryService
             return collect();
         }
 
-        // Escapa os curingas de LIKE; '\' é o caractere de escape declarado abaixo.
-        $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term);
-        $pattern = '%' . $escaped . '%';
-
-        $driver = DB::connection($this->connection)->getDriverName();
-
         $query = $this->scopeDateRange($this->query(), Carbon::now()->subDays($days));
 
         if ($type !== null && $type !== '') {
             $this->scopeType($query, $type);
         }
 
+        $this->scopeContentSearch($query, $term);
+
+        return $this->scopeLatestFirst($query)->limit($limit)->get();
+    }
+
+    /** Scope: substring em content/tags, com os curingas de LIKE escapados */
+    public function scopeContentSearch(\Illuminate\Database\Query\Builder $query, string $term): \Illuminate\Database\Query\Builder
+    {
+        // Escapa os curingas de LIKE; '\' é o caractere de escape declarado abaixo.
+        $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($term));
+        $pattern = '%' . $escaped . '%';
+
+        $driver = DB::connection($this->connection)->getDriverName();
+
         if ($driver === 'pgsql') {
-            $query->where(function ($q) use ($pattern) {
+            return $query->where(function ($q) use ($pattern) {
                 $q->whereRaw("content::text ILIKE ? ESCAPE '\\'", [$pattern])
                     ->orWhereRaw("tags::text ILIKE ? ESCAPE '\\'", [$pattern]);
             });
-        } else {
-            $query->where(function ($q) use ($pattern) {
-                $q->whereRaw("content LIKE ? ESCAPE '\\'", [$pattern])
-                    ->orWhereRaw("tags LIKE ? ESCAPE '\\'", [$pattern]);
-            });
         }
 
-        return $this->scopeLatestFirst($query)->limit($limit)->get();
+        return $query->where(function ($q) use ($pattern) {
+            $q->whereRaw("content LIKE ? ESCAPE '\\'", [$pattern])
+                ->orWhereRaw("tags LIKE ? ESCAPE '\\'", [$pattern]);
+        });
+    }
+
+    /**
+     * Página de eventos para listagem (tabela do painel).
+     *
+     * Filtros: type, from/to (Y-m-d), unresolved, search, tenant_id, sort,
+     * order. Toda entrada vem do request: a ordenação passa por lista fechada e
+     * a busca textual só roda dentro de uma janela de datas — sem `from`, vale
+     * `$searchDays` para trás, para o LIKE não varrer a tabela inteira.
+     */
+    public function paginate(array $filters, int $perPage, int $page, int $searchDays = 30): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    {
+        $query = $this->query();
+
+        if (!empty($filters['type'])) {
+            $this->scopeType($query, (string) $filters['type']);
+        }
+
+        if (!empty($filters['tenant_id'])) {
+            $this->scopeTagKey($query, 'tenant_id', (string) $filters['tenant_id']);
+        }
+
+        $from = $this->parseDay($filters['from'] ?? null);
+        $to = $this->parseDay($filters['to'] ?? null);
+
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        if ($search !== '' && !$from) {
+            $from = Carbon::now()->subDays($searchDays)->startOfDay();
+        }
+
+        if ($from) {
+            $this->scopeDateRange($query, $from->startOfDay(), $to?->endOfDay());
+        } elseif ($to) {
+            $query->where('created_at', '<=', $to->endOfDay()->toDateTimeString());
+        }
+
+        if (!empty($filters['unresolved'])) {
+            $query->whereNull('resolved_at');
+        }
+
+        if ($search !== '') {
+            $this->scopeContentSearch($query, $search);
+        }
+
+        $sort = in_array($filters['sort'] ?? null, ['created_at', 'type'], true) ? $filters['sort'] : 'created_at';
+        $order = strtolower((string) ($filters['order'] ?? 'desc')) === 'asc' ? 'ASC' : 'DESC';
+
+        return $query->orderBy($sort, $order)->paginate($perPage, ['*'], 'page', max(1, $page));
+    }
+
+    /** Data Y-m-d do request; inválida vira null (filtro ignorado, sem 500). */
+    private function parseDay(mixed $value): ?Carbon
+    {
+        if (!is_string($value) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return null;
+        }
+
+        try {
+            return Carbon::createFromFormat('Y-m-d', $value);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

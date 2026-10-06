@@ -66,9 +66,18 @@ class MonitoringRepository implements MonitoringRepositoryInterface
 
         $data = $this->encodeJsonColumns($data);
 
-        DB::connection($this->connection)
-            ->table($this->table)
-            ->insert($data);
+        // Um INSERT multi-linha por lote: o flush do fim do request pode ter
+        // centenas de entradas, e um único statement gigante esbarra no limite
+        // de parâmetros do driver (65535 no PostgreSQL; 9 colunas por linha).
+        $chunkSize = max(1, (int) config('monitoring.insert_chunk_size', 200));
+        $query = DB::connection($this->connection)->table($this->table);
+
+        // insertOrIgnore: o `uuid` é único, então regravar a mesma entrada (o
+        // spool-recover reprocessando um arquivo cujo INSERT chegou a entrar
+        // antes de o processo morrer) não duplica nem falha.
+        foreach (array_chunk($data, $chunkSize) as $rows) {
+            $query->insertOrIgnore($rows);
+        }
     }
 
     // ---------------------------------------------------------------
@@ -315,6 +324,28 @@ class MonitoringRepository implements MonitoringRepositoryInterface
         $results = $query->paginate($perPage);
 
         return $results->getCollection()->map(fn($event) => $this->formatEvent($event));
+    }
+
+    public function paginateEvents(array $filters): array
+    {
+        $perPage = (int) ($filters['per_page'] ?? self::DEFAULT_PER_PAGE);
+        $perPage = max(1, min($perPage, self::MAX_PER_PAGE));
+
+        $page = $this->queryService->paginate(
+            $filters,
+            $perPage,
+            (int) ($filters['page'] ?? 1),
+            self::SEARCH_DEFAULT_DAYS
+        );
+
+        return [
+            'data' => $page->getCollection()->map(fn($event) => $this->formatEvent($event))->values()->all(),
+            'recordsTotal' => $page->total(),
+            'recordsFiltered' => $page->total(),
+            'totalPages' => $page->lastPage(),
+            'perPage' => $page->perPage(),
+            'current_page' => $page->currentPage(),
+        ];
     }
 
     /**

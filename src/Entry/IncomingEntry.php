@@ -7,6 +7,7 @@ use Carbon\CarbonInterface;
 use Illuminate\Foundation\Auth\User;
 use Illuminate\Support\Str;
 use RiseTechApps\Monitoring\Services\BatchIdService;
+use RiseTechApps\Monitoring\Support\Redactor;
 use RiseTechApps\RiseTools\Features\Device\Device;
 
 class IncomingEntry
@@ -58,10 +59,15 @@ class IncomingEntry
         // primeira entrada do request define o batch e as seguintes o herdam.
         $this->batchId = app(BatchIdService::class)->getBatchId();
 
-        // Captura device uma vez por request (ver resetDeviceCache)
+        // Captura device uma vez por request (ver resetDeviceCache).
+        //
+        // Geolocalização desligada por padrão: no risetools ela é uma chamada
+        // HTTP externa (até 6s) e esta é a PRIMEIRA entrada do request —
+        // normalmente a do RequestWatcher, antes da resposta ir ao cliente.
+        // (Com risetools < 3.1 o argumento é ignorado e o geo continua.)
         if (self::$deviceCache === null) {
             try {
-                self::$deviceCache = Device::info() ?? [];
+                self::$deviceCache = Device::info((bool) config('monitoring.device.geo_ip', false)) ?? [];
             } catch (\Throwable) {
                 self::$deviceCache = [];
             }
@@ -149,6 +155,9 @@ class IncomingEntry
 
     private function encodeContent(array $content): string
     {
+        // Ponto único de ocultação: toda entrada (watchers e Loggly) passa aqui.
+        $content = Redactor::redact($content);
+
         // Trunca o response body se for maior que 32KB
         if (isset($content['response']) && is_array($content['response'])) {
             $encoded = json_encode($content['response'], JSON_PARTIAL_OUTPUT_ON_ERROR);

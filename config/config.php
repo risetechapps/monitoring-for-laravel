@@ -27,7 +27,97 @@ return [
     | Tamanho máximo do buffer antes de persistir
     |--------------------------------------------------------------------------
     */
-    'buffer_size' => (int) env('MONITORING_BUFFER_SIZE', 5),
+    'buffer_size' => (int) env('MONITORING_BUFFER_SIZE', 20),
+
+    // Requisição HTTP: o buffer só vai para o banco no fim (terminating(), depois
+    // da resposta). Estes são só tetos de memória — o primeiro que for atingido
+    // grava na hora. buffer_size passa a valer só para console/worker.
+    'http_max_buffer' => (int) env('MONITORING_HTTP_MAX_BUFFER', 1000),
+    'http_max_buffer_mb' => (int) env('MONITORING_HTTP_MAX_BUFFER_MB', 8),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rascunho em disco (não perder log)
+    |--------------------------------------------------------------------------
+    |
+    | Cada entrada é anexada, no ato, a um arquivo .jsonl do processo. Se o
+    | processo morrer antes do flush (SIGKILL, OOM, timeout do PHP-FPM, deploy)
+    | ou o banco estiver fora, o arquivo fica e o `monitoring:spool-recover`
+    | (agendado a cada minuto) grava no banco depois.
+    |
+    | Em Docker, `path` precisa ser um VOLUME montado em todos os containers do
+    | serviço (app, worker, orchestrator e scheduler — quem roda o recover).
+    */
+    'spool' => [
+        'enabled'      => env('MONITORING_SPOOL_ENABLED', true),
+        // null = storage/monitoring/spool
+        'path'         => env('MONITORING_SPOOL_PATH'),
+        'auto_recover' => env('MONITORING_SPOOL_AUTO_RECOVER', true),
+        // Teto por arquivo de processo: atingido, segue só na memória.
+        'max_file_mb'  => (int) env('MONITORING_SPOOL_MAX_FILE_MB', 50),
+    ],
+
+    // Linhas por INSERT ao gravar o buffer.
+    'insert_chunk_size' => (int) env('MONITORING_INSERT_CHUNK', 200),
+
+    // Em processos de console (listener, daemon, worker) não há fim de request:
+    // o buffer é gravado também a cada N segundos. 0 = só por tamanho.
+    'flush_interval_seconds' => (int) env('MONITORING_FLUSH_INTERVAL', 10),
+
+    // Batch gerado automaticamente (sem request/job que o encerre) é renovado
+    // após N segundos — senão um processo longo grava tudo num batch só.
+    'batch_max_age_seconds' => (int) env('MONITORING_BATCH_MAX_AGE', 300),
+
+    // Store de cache das métricas de performance. null = padrão. É resolvido
+    // sempre SEM prefixo de tenant (métrica é do serviço, não do usuário).
+    'cache_store' => env('MONITORING_CACHE_STORE'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Ocultação de dados sensíveis
+    |--------------------------------------------------------------------------
+    |
+    | Toda entrada passa pelo Support\Redactor antes de ser gravada: o valor de
+    | qualquer chave (em qualquer nível) que case com um destes padrões vira
+    | '********', e parâmetros de query sensíveis em URLs também.
+    | Padrões fnmatch, sem diferenciar maiúsculas.
+    |
+    | keys: null = Redactor::DEFAULT_KEYS (*password*, *token*, *secret*,
+    |       *signature*, authorization, cookie, api_key, recovery_code, ...).
+    |       Definir aqui SUBSTITUI a lista padrão.
+    | extra_keys: somados à lista (padrão ou a de keys).
+    */
+    'redact' => [
+        'keys' => null,
+        'extra_keys' => [],
+    ],
+
+    // Geolocalização do IP em cada entrada. É uma chamada HTTP externa
+    // (risetools Device), feita no caminho do request: desligada por padrão.
+    'device' => [
+        'geo_ip' => (bool) env('MONITORING_GEO_IP', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workers de fila (queue:work, horizon, schedule:work)
+    |--------------------------------------------------------------------------
+    |
+    | Em worker só rodam os watchers abaixo (+ Loggly), com batch e flush por
+    | job. O JobWatcher grava só falhas (job_options sobrescreve).
+    | enabled=false volta ao comportamento antigo: nada é gravado em worker —
+    | inclusive logglyError() dentro de job.
+    */
+    'workers' => [
+        'enabled' => env('MONITORING_WORKERS_ENABLED', true),
+        'watchers' => [
+            \RiseTechApps\Monitoring\Watchers\ExceptionWatcher::class,
+            \RiseTechApps\Monitoring\Watchers\JobWatcher::class,
+        ],
+        'job_options' => [
+            // 'record_processed' => true,
+        ],
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -164,6 +254,9 @@ return [
                 'ignore_to_addresses' => [
                     // 'test@example.com',
                 ],
+                // Gravar o corpo do e-mail. Desligado: e-mail de redefinição /
+                // primeiro acesso leva link com token e código em texto livre.
+                'record_html' => (bool) env('MONITORING_MAIL_RECORD_HTML', false),
             ],
         ],
         \RiseTechApps\Monitoring\Watchers\ClientRequestWatcher::class => [
@@ -242,6 +335,10 @@ return [
         'disk'          => env('MONITORING_RETENTION_DISK', 'local'),
         'time'          => env('MONITORING_RETENTION_TIME', '02:00'),
         'chunk_size'    => (int) env('MONITORING_RETENTION_CHUNK', 500),
+
+        // Exportar antes de apagar. Em container, use um disco persistente
+        // (ex.: s3) — o 'local' some no redeploy. false = só apaga.
+        'export'        => env('MONITORING_RETENTION_EXPORT', true),
 
         // Política de retenção granular por tipo.
         // Precisa ter uma chave para cada tipo em RetentionService::TYPE_MAPPING —

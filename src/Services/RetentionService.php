@@ -146,30 +146,35 @@ class RetentionService
                 // 1. Tenta exportar o lote
                 $filename = "monitoring/retention/{$entryType}/{$dateLabel}/{$runLabel}_batch{$batchIndex}.{$format}";
 
-                try {
-                    $content = $format === 'csv'
-                        ? $this->toCsv($rows)
-                        : $this->toJson($rows);
+                // retention.export=false: só apaga. Em container o disco 'local'
+                // é efêmero (some no redeploy) e cresce a cada execução — exportar
+                // para ele dá a impressão de backup sem ser um.
+                if (config('monitoring.retention.export', true)) {
+                    try {
+                        $content = $format === 'csv'
+                            ? $this->toCsv($rows)
+                            : $this->toJson($rows);
 
-                    $written = Storage::disk($disk)->put($filename, $content);
+                        $written = Storage::disk($disk)->put($filename, $content);
 
-                    if (!$written) {
-                        $stats['errors'][] = "Falha ao gravar arquivo: {$filename}";
+                        if (!$written) {
+                            $stats['errors'][] = "Falha ao gravar arquivo: {$filename}";
+                            return;
+                        }
+
+                        $stats['files'][] = $filename;
+                        $stats['exported'] += count($ids);
+
+                    } catch (\Throwable $e) {
+                        $stats['errors'][] = "Erro no lote {$batchIndex}: {$e->getMessage()}";
+                        Log::error('[Monitoring Retention] Erro ao exportar lote', [
+                            'batch' => $batchIndex,
+                            'type' => $entryType,
+                            'error' => $e->getMessage(),
+                            'filename' => $filename,
+                        ]);
                         return;
                     }
-
-                    $stats['files'][] = $filename;
-                    $stats['exported'] += count($ids);
-
-                } catch (\Throwable $e) {
-                    $stats['errors'][] = "Erro no lote {$batchIndex}: {$e->getMessage()}";
-                    Log::error('[Monitoring Retention] Erro ao exportar lote', [
-                        'batch' => $batchIndex,
-                        'type' => $entryType,
-                        'error' => $e->getMessage(),
-                        'filename' => $filename,
-                    ]);
-                    return;
                 }
 
                 // 2. Remove do banco somente após backup confirmado

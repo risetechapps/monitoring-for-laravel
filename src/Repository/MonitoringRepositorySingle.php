@@ -129,7 +129,33 @@ class MonitoringRepositorySingle implements MonitoringRepositoryInterface
     /**
      * Operação não suportada no driver de arquivo.
      */
+    public function paginateEvents(array $filters): array
+    {
+        return [
+            'data' => [],
+            'recordsTotal' => 0,
+            'recordsFiltered' => 0,
+            'totalPages' => 0,
+            'perPage' => 0,
+            'current_page' => 1,
+        ];
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     */
     public function searchEvents(string $query, ?string $type = null, int $days = 30): Collection
+    {
+        return collect();
+    }
+
+    /**
+     * Operação não suportada no driver de arquivo.
+     *
+     * Faltava: sem ela a classe não implementava a interface e qualquer uso de
+     * MONITORING_DRIVER=single dava erro fatal ao carregar o repositório.
+     */
+    public function getTimelineByTag(string $tag, string $value, string $period = '24 hours'): Collection
     {
         return collect();
     }

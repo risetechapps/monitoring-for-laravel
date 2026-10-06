@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true">
+    <testsuites>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:2fl+Ktvkfl+Fuz4Qp/A75G2RTiWVA/ZoKZvp6fiiM10="/>
+        <!-- PostgreSQL / Redis locais (credenciais no tests/.env.testing do TenancyForLaravel). -->
+        <env name="DB_HOST" value="127.0.0.1" force="false"/>
+        <env name="DB_PORT" value="5432" force="false"/>
+        <env name="DB_USERNAME" value="postgres" force="false"/>
+        <env name="REDIS_HOST" value="127.0.0.1" force="false"/>
+        <env name="REDIS_PORT" value="6379" force="false"/>
+        <env name="REDIS_TEST_DB" value="15" force="false"/>
+    </php>
+</phpunit>

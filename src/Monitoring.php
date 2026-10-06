@@ -10,6 +10,13 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Queue\Events\JobExceptionOccurred;
+use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
+use RiseTechApps\Monitoring\Services\BatchIdService;
+use RiseTechApps\Monitoring\Support\Spool;
 use RiseTechApps\Monitoring\Entry\IncomingEntry;
 use RiseTechApps\Monitoring\Repository\Contracts\MonitoringRepositoryInterface;
 use RiseTechApps\Monitoring\Services\Alerts\AlertService;
@@ -63,6 +70,15 @@ class Monitoring
     private static bool $isRecording  = false;
     private static bool $shutdownRegistered = false;
 
+    /** Processo de fila/daemon: só watchers de baixo volume, flush por job. */
+    private static bool $workerMode = false;
+
+    /** Último flush (microtime) — flush por tempo em processos de console. */
+    private static float $lastFlushAt = 0.0;
+
+    /** Tamanho aproximado do buffer em bytes (teto de memória do HTTP). */
+    private static int $bufferBytes = 0;
+
     public function __construct(MonitoringRepositoryInterface $repository)
     {
         self::$repository = $repository;
@@ -91,13 +107,20 @@ class Monitoring
         $repository       = $app->make(MonitoringRepositoryInterface::class);
         self::$repository = $repository;
 
-        // Workers de fila processam um volume de eventos que não corresponde a
-        // tráfego de usuário — cada job arrasta suas queries, eventos e caches.
-        // Monitorá-los inunda a tabela sem gerar sinal útil, então ficam de fora
-        // por padrão, independente de monitoring.enabled (que segue valendo para HTTP).
+        // Workers de fila: cada job arrasta queries, eventos e caches — monitorar
+        // tudo inundaria a tabela. Mas desligar TUDO (como era) perdia o que
+        // importa: logglyError() dentro de job e job que falhou sumiam em
+        // silêncio. Em worker ficam só os watchers de `monitoring.workers.watchers`
+        // (exceções e jobs falhos) + o Loggly, com batch e flush por job.
+        static::$workerMode = false;
+
         if (static::isLongRunningWorker()) {
-            static::$enabled = false;
-            return;
+            if (!static::$enabled || !config('monitoring.workers.enabled', true)) {
+                static::$enabled = false;
+                return;
+            }
+
+            static::$workerMode = true;
         }
 
         $configuredBuffer = (int) config('monitoring.buffer_size', self::$bufferSize);
@@ -106,9 +129,26 @@ class Monitoring
         static::$watchers = [];
 
         foreach (static::configuredWatchers() as $watcherClass => $options) {
+            if (static::$workerMode) {
+                if (!in_array($watcherClass, static::workerWatchers(), true)) {
+                    continue;
+                }
+
+                // Em worker o JobWatcher grava só falhas: "pending" (um por job
+                // despachado) e "processed" (um por job concluído) são o volume
+                // que tirou os workers do monitoramento.
+                if (is_a($watcherClass, Watchers\JobWatcher::class, true)) {
+                    $options = array_replace(['record_pending' => false, 'record_processed' => false], $options, (array) config('monitoring.workers.job_options', []));
+                }
+            }
+
             $watcher = $app->make($watcherClass, ['options' => $options]);
             static::$watchers[] = $watcher::class;
             $watcher->register($app);
+        }
+
+        if (static::$workerMode) {
+            static::registerWorkerLifecycle($app);
         }
 
         // BUG B FIX — Safety net: garante flush mesmo que terminating() não dispare.
@@ -117,6 +157,7 @@ class Monitoring
         if (!static::$shutdownRegistered) {
             register_shutdown_function(static function () {
                 static::flushAll();
+                Spool::shutdown();
             });
             static::$shutdownRegistered = true;
         }
@@ -159,6 +200,53 @@ class Monitoring
         }
 
         return false;
+    }
+
+    /** @return array<int, class-string> watchers ativos em worker de fila */
+    protected static function workerWatchers(): array
+    {
+        return (array) config('monitoring.workers.watchers', [
+            Watchers\ExceptionWatcher::class,
+            Watchers\JobWatcher::class,
+        ]);
+    }
+
+    public static function isWorkerMode(): bool
+    {
+        return static::$workerMode;
+    }
+
+    /**
+     * Batch e flush por job no worker.
+     *
+     * No HTTP o batch nasce e morre com o request (terminating). O worker é um
+     * processo só: sem isto todos os jobs dividiriam o mesmo batch e o buffer só
+     * esvaziaria a cada N entradas — logs de um job grudados no seguinte.
+     * Registrado DEPOIS dos watchers: no JobFailed, o JobWatcher grava a falha
+     * antes do flush.
+     */
+    protected static function registerWorkerLifecycle(Application $app): void
+    {
+        $events = $app['events'];
+
+        $events->listen(JobProcessing::class, function (JobProcessing $event) use ($app) {
+            static::flushAll();
+
+            $batch = $app->make(BatchIdService::class);
+            $batch->forceDelete();
+            $batch->setBatchId((string) ($event->job->payload()['batch_id'] ?? $event->job->uuid() ?? \Illuminate\Support\Str::orderedUuid()));
+
+            IncomingEntry::resetDeviceCache();
+        });
+
+        $finish = function () use ($app) {
+            static::flushAll();
+            $app->make(BatchIdService::class)->forceDelete();
+        };
+
+        $events->listen(JobProcessed::class, $finish);
+        $events->listen(JobExceptionOccurred::class, $finish);
+        $events->listen(JobFailed::class, $finish);
     }
 
     protected static function configuredWatchers(): array
@@ -366,15 +454,50 @@ class Monitoring
             static::isAuth($entry);
             static::isTags($entry, $type);
 
-            self::$buffer[] = $entry;
+            // Serializa (e oculta) já no registro: a mesma linha vai para o
+            // buffer e para o rascunho em disco (Support\Spool), que sobrevive
+            // se o processo morrer antes do flush.
+            $row = $entry->toArray();
+
+            self::$buffer[] = $row;
+            self::$bufferBytes += strlen((string) ($row['content'] ?? '')) + 512;
+            Spool::append($row);
 
             // Verifica alertas para eventos críticos
             static::checkAlerts($entry, $type);
 
-            // Teto rígido — defesa em profundidade. O caminho normal nunca passa
-            // de bufferSize, mas se o flush parar de acontecer é preferível
-            // descartar as entradas mais antigas a derrubar a aplicação.
-            $hardCap = self::$bufferSize * 10;
+            $console = App::runningInConsole();
+            $count   = count(self::$buffer);
+
+            // HTTP: nada vai para o banco durante o request. O terminating()
+            // grava tudo DEPOIS que a resposta foi entregue (no PHP-FPM o
+            // Response::send() já chamou fastcgi_finish_request()). Antes, o
+            // flush por tamanho (buffer 5) fazia ~90 INSERTs no caminho do
+            // usuário num request com muitos eventos — ~87% do tempo de banco.
+            // O teto só existe para não estourar a memória.
+            $hardCap = $console
+                ? self::$bufferSize * 10
+                : max(self::$bufferSize, (int) config('monitoring.http_max_buffer', 1000));
+
+            $maxBytes = (int) config('monitoring.http_max_buffer_mb', 8) * 1024 * 1024;
+
+            if ($count >= $hardCap || (!$console && $maxBytes > 0 && self::$bufferBytes >= $maxBytes)) {
+                // Teto: grava mesmo dentro de transação (ver abaixo) — melhor
+                // arriscar o rollback levar estas entradas do que crescer sem fim.
+                static::flushBuffer();
+            } elseif ($console && $count >= self::$bufferSize && !static::inStorageTransaction()) {
+                // Console/worker: flush por tamanho (não há terminating() por
+                // request). O final é garantido pelo fim do job e pelo
+                // register_shutdown_function().
+                static::flushBuffer();
+            } elseif ($console && $count > 0 && static::flushIntervalElapsed() && !static::inStorageTransaction()) {
+                // Processo de console de longa duração (listener, daemon): sem
+                // terminating(), as entradas esperariam o buffer encher.
+                static::flushBuffer();
+            }
+
+            // Defesa em profundidade: se o flush estiver falhando, descarta as
+            // mais antigas em vez de derrubar a aplicação.
             if (count(self::$buffer) > $hardCap) {
                 self::$buffer = array_slice(self::$buffer, -$hardCap);
                 static::writeInternalError('record', 'buffer_overflow', new \RuntimeException(
@@ -382,21 +505,55 @@ class Monitoring
                     'O flush provavelmente está falhando.'
                 ));
             }
-
-            // Flush apenas por tamanho de buffer. O flush final é garantido pelo
-            // terminating() e pelo register_shutdown_function().
-            //
-            // Havia aqui um `elseif (App::runningInConsole()) flushBuffer()` que
-            // fazia um INSERT por evento em console — um job com 20 queries virava
-            // 20 INSERTs em vez de um batch.
-            if (count(self::$buffer) >= self::$bufferSize) {
-                static::flushBuffer();
-            }
         } catch (\Throwable $e) {
             static::writeInternalError('record', $type, $e);
         } finally {
             self::$isRecording = false;
         }
+    }
+
+    /**
+     * Há transação aberta na conexão onde o monitoring grava?
+     *
+     * Na mesma conexão (rotas centrais usam a `pgsql` da aplicação), um INSERT
+     * no meio de um DB::beginTransaction() entraria na transação da aplicação —
+     * e um rollback apagaria justamente os logs do que deu errado. O flush é
+     * adiado: terminating()/fim do job grava depois que a transação fechou.
+     */
+    protected static function inStorageTransaction(): bool
+    {
+        if (config('monitoring.driver') !== 'database') {
+            return false;
+        }
+
+        try {
+            $connection = config('monitoring.drivers.database.connection');
+
+            return DB::connection($connection)->transactionLevel() > 0;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    protected static function flushIntervalElapsed(): bool
+    {
+        if (!App::runningInConsole()) {
+            return false;
+        }
+
+        $interval = (float) config('monitoring.flush_interval_seconds', 10);
+
+        if ($interval <= 0) {
+            return false;
+        }
+
+        if (self::$lastFlushAt === 0.0) {
+            self::$lastFlushAt = microtime(true);
+
+            return false;
+        }
+
+        return (microtime(true) - self::$lastFlushAt) >= $interval;
     }
 
     /**
@@ -426,8 +583,10 @@ class Monitoring
             return;
         }
 
-        $entries       = self::$buffer;
+        $rows          = self::$buffer;
         self::$buffer  = [];
+        self::$bufferBytes = 0;
+        self::$lastFlushAt = microtime(true);
 
         try {
             // Verifica se o repositório foi inicializado (proteção contra
@@ -442,17 +601,19 @@ class Monitoring
                         'e se Monitoring::start() foi chamado no boot().'
                     )
                 );
+                Spool::abandon();
                 return;
             }
 
-            $dataEntry = [];
-            foreach ($entries as $entry) {
-                $dataEntry[] = $entry->toArray();
-            }
+            self::$repository->create($rows);
 
-            self::$repository->create($dataEntry);
+            Spool::committed();
 
         } catch (\Throwable $e) {
+            // As entradas continuam no rascunho em disco: o recover grava
+            // quando o banco voltar.
+            Spool::abandon();
+
             static::writeInternalError('flushBuffer', 'batch', $e);
 
             // BUG A FIX — Torna o erro VISÍVEL no log padrão do PHP/Laravel.
@@ -464,7 +625,7 @@ class Monitoring
                 $e->getLine()
             ));
         } finally {
-            unset($entries);
+            unset($rows);
         }
     }
 
@@ -510,10 +671,32 @@ class Monitoring
         $entry->type($type)->tags(Arr::collapse(array_map(fn($tagCallback) => $tagCallback($entry), static::$tagUsing)));
     }
 
-    public static function tag(Closure $callback): static
+    /**
+     * Registra uma função que devolve tags para TODA entrada.
+     *
+     * A função roda no momento de cada registro (Monitoring::record → isTags),
+     * não no momento em que foi registrada: lê o contexto vigente daquele
+     * instante (ex.: tenant/filial ativos, inclusive dentro de um run()).
+     *
+     * @param Closure(IncomingEntry): array<string, scalar> $callback
+     */
+    public static function registerTagResolver(Closure $callback): void
     {
         static::$tagUsing[] = $callback;
-        return new static(self::$repository);
+    }
+
+    /**
+     * @deprecated use registerTagResolver().
+     *
+     * Antes fazia `new static(...)`: o construtor religava o monitoring
+     * (`$enabled = true`) mesmo desligado de propósito, e quebrava (propriedade
+     * estática não inicializada) onde o monitoring não sobe (ex.: migrate).
+     */
+    public static function tag(Closure $callback): static
+    {
+        static::registerTagResolver($callback);
+
+        return (new \ReflectionClass(static::class))->newInstanceWithoutConstructor();
     }
 
     public static function flushAll(): void

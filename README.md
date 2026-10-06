@@ -119,19 +119,31 @@ monitoring()->increment('cache_hit');   // em vez de MONITORING_WATCH_CACHE_HITS
 
 ### Workers de fila
 
-O monitoramento é desligado automaticamente em `queue:work`, `queue:listen`,
-`horizon`, `horizon:work`, `horizon:supervisor` e `schedule:work`, independente
-de `MONITORING_ENABLED`. Um worker processa um volume de eventos que não
-corresponde a tráfego de usuário — cada job arrasta suas queries, eventos e
-operações de cache — e inundaria a tabela sem gerar sinal útil.
+Em `queue:work`, `queue:listen`, `horizon`, `horizon:work`,
+`horizon:supervisor` e `schedule:work` o monitoramento roda em **modo worker**:
 
-`schedule:run` (execução pontual do cron) continua monitorado. Octane
+- só os watchers de `monitoring.workers.watchers` (padrão: `ExceptionWatcher` e
+  `JobWatcher`) + o Loggly (`logglyError()` etc. dentro do job);
+- o `JobWatcher` grava só **jobs que falharam** (`record_pending` e
+  `record_processed` desligados; ajuste em `monitoring.workers.job_options`);
+- cada job tem o **próprio batch** e o buffer é gravado ao fim de cada job.
+
+Queries, eventos e cache de cada job continuam de fora — eles inundariam a
+tabela sem gerar sinal útil. Para o comportamento antigo (nada em worker,
+inclusive o Loggly), use `MONITORING_WORKERS_ENABLED=false`.
+
+`schedule:run` (execução pontual do cron) continua monitorado normalmente. Octane
 (`octane:start`) também: seus workers atendem requisições HTTP normais.
 
 ### Retenção
 
 A limpeza automática vem **ligada** (`MONITORING_RETENTION_AUTO_SCHEDULE=true`).
 Sem ela a tabela `monitoring` cresce indefinidamente.
+
+Antes de apagar, cada lote é exportado para `MONITORING_RETENTION_DISK`
+(`local` por padrão). Em container o disco `local` some no redeploy e cresce a
+cada execução: aponte para um disco persistente (ex.: `s3`) ou desligue a
+exportação com `MONITORING_RETENTION_EXPORT=false`.
 
 > ⚠️ A retenção usa o Scheduler do Laravel. Confirme que existe um container
 > rodando `schedule:work` (ou um cron chamando `schedule:run`) — sem isso ela
@@ -862,18 +874,61 @@ if (Monitoring::isEnabled()) {
 ### Adicionar tags globais a todas as entradas
 
 ```php
-// Em um ServiceProvider
-Monitoring::tag(function ($entry) {
-    return ['ambiente:' . app()->environment()];
+// Em um ServiceProvider (boot)
+Monitoring::registerTagResolver(function ($entry) {
+    return ['ambiente' => app()->environment()];
 });
 ```
 
+A função é registrada uma vez, mas roda **a cada entrada registrada**, lendo o
+contexto daquele instante. O `risetechapps/tenancy-for-laravel` usa isso para
+marcar toda entrada com `service`, `tenant_id` e `sub_tenant_id` — filtre com
+`POST /monitoring/tags` (`{"tenant_id": "...", "sub_tenant_id": "..."}`).
+
+> `Monitoring::tag()` continua funcionando, mas está obsoleto: até a 4.0 ele
+> criava uma instância por baixo, o que religava o monitoring desligado e
+> quebrava onde ele não sobe (ex.: `migrate`).
+
 ### Ocultar parâmetros sensíveis
+
+**Toda** entrada (watchers e Loggly) passa pelo `Support\Redactor` antes de ser
+gravada: o valor de qualquer chave — em qualquer nível — que case com os padrões
+abaixo vira `********`, e parâmetros de query sensíveis em URLs também
+(`?token=...`, `?signature=...`).
+
+Padrões padrão (fnmatch, sem diferenciar maiúsculas): `*password*`, `*token*`,
+`*secret*`, `*signature*`, `authorization`, `proxy-authorization`, `cookie`,
+`set-cookie`, `php-auth-pw`, `x-api-key`, `api_key`, `apikey`, `api-key`,
+`private_key`, `recovery_code(s)`, `two_factor_*`, `otp`, `cvv`, `card_number`.
+
+```php
+// config/monitoring.php
+'redact' => [
+    'keys' => null,                 // null = padrões acima; um array SUBSTITUI a lista
+    'extra_keys' => ['cpf', 'rg'],  // somados à lista
+],
+```
+
+O `Loggly::withRequest($request)` grava só método, URI e input (ocultado).
+
+> O que a ocultação por chave **não** pega: segredo em texto livre (ex.:
+> "seu código é 123456" no corpo de um e-mail). Por isso o `MailWatcher` não
+> grava o corpo por padrão (`MONITORING_MAIL_RECORD_HTML=false`).
+
+As listas por caminho continuam valendo, somadas às regras acima:
 
 ```php
 // Em um ServiceProvider
 Monitoring::$hiddenRequestParameters = ['cartao_numero', 'cvv'];
 Monitoring::$hiddenResponseParameters = ['token_acesso', 'secret'];
+```
+
+#### Limpar registros gravados antes da ocultação
+
+```bash
+php artisan monitoring:redact --dry-run   # só conta
+php artisan monitoring:redact --force     # reescreve (irreversível)
+php artisan monitoring:redact --days=30 --force
 ```
 
 ### Registrar rotas do pacote
@@ -928,9 +983,47 @@ Quando usando os drivers `mysql` ou `pgsql`, os eventos são armazenados na tabe
 
 O pacote utiliza um buffer em memória para otimizar a performance, evitando uma escrita no storage para cada evento individualmente.
 
-- As entradas são acumuladas no buffer até atingir `buffer_size` (padrão: `5`).
-- O buffer é descarregado automaticamente ao final de cada requisição HTTP (evento `RequestHandled`).
-- Em ambientes de console (jobs, commands), o buffer é descarregado imediatamente após cada entrada.
+- **Requisição HTTP:** nada é gravado durante o request. O buffer vai para o banco no `terminating()`, depois que a resposta foi entregue (no PHP-FPM o `Response::send()` já chamou `fastcgi_finish_request()`), em INSERTs de `MONITORING_INSERT_CHUNK` linhas (padrão `200`). Só grava antes se o buffer chegar a `MONITORING_HTTP_MAX_BUFFER` (padrão `1000`), para não estourar memória.
+- **Console e worker:** acumulam até `buffer_size` (padrão `20`) e gravam ao fim de cada job (modo worker) e no encerramento do processo.
+- Quem decide entre os dois é `app()->runningInConsole()`. Se num servidor de longa duração (ex.: Octane) ele voltar `true` para requests HTTP, vale o caminho de console (flush por tamanho).
+- O teto de memória do HTTP é o primeiro entre `MONITORING_HTTP_MAX_BUFFER` (entradas) e `MONITORING_HTTP_MAX_BUFFER_MB` (padrão `8`).
+
+### Rascunho em disco — nenhum log perdido
+
+Guardar no buffer até o fim do request tira o banco do tempo de resposta, mas
+um processo morto antes do flush levaria tudo junto. Por isso cada entrada
+também é anexada, **no ato do registro**, a um arquivo `.jsonl` do processo
+(`storage/monitoring/spool`, ou `MONITORING_SPOOL_PATH`):
+
+| Situação | O que acontece |
+|---|---|
+| Gravou no banco | o arquivo é zerado |
+| Banco fora do ar no flush | o arquivo fica (com `fsync`) |
+| Processo morto (SIGKILL, OOM, timeout do PHP-FPM, deploy) | o arquivo fica — a trava (`flock`) some com o processo |
+
+O `monitoring:spool-recover`, agendado **a cada minuto**, grava no banco todo
+arquivo sem dono (trava livre) e o apaga. Arquivo de processo vivo é pulado.
+Reprocessar não duplica: a gravação ignora `uuid` repetido. Linha incompleta
+(processo morto no meio da escrita) é descartada.
+
+Custo no request: uma escrita local (`fwrite` + `fflush`) por entrada — sem rede.
+
+> **Docker:** a pasta precisa ser um **volume** montado em todos os containers
+> do serviço (app, worker, orchestrator e o **scheduler**, que roda o recover).
+> Sem volume, os órfãos de um container recriado num deploy se perdem.
+
+O que ainda pode se perder: entrada escrita nos milissegundos antes de uma queda
+da **máquina** (antes de o sistema operacional levar ao disco) e o disco em si.
+
+```env
+MONITORING_SPOOL_ENABLED=true
+MONITORING_SPOOL_PATH=            # vazio = storage/monitoring/spool
+MONITORING_SPOOL_AUTO_RECOVER=true
+MONITORING_SPOOL_MAX_FILE_MB=50   # por processo; atingido, segue só na memória
+```
+- **Nunca no meio de uma transação** aberta na conexão do monitoring: o flush é adiado até ela fechar — senão um rollback apagaria justamente os logs do que deu errado. (Só passa por cima se o buffer chegar a 10× o `buffer_size`.)
+- Em console, também a cada `MONITORING_FLUSH_INTERVAL` segundos (padrão `10`), para processos longos (listeners, daemons).
+- Batch gerado automaticamente expira após `MONITORING_BATCH_MAX_AGE` segundos (padrão `300`): um processo longo não grava tudo num batch só.
 
 Configure o tamanho do buffer:
 
@@ -1092,7 +1185,8 @@ O pacote disponibiliza rotas prontas para expor os eventos via API. Registre-as 
 ```php
 use RiseTechApps\Monitoring\Monitoring;
 
-// Registro básico (usa middleware 'api' por padrão)
+// Registro básico (middleware ['api', 'auth:sanctum'] por padrão — as rotas
+// expõem payloads e logs de toda a aplicação). Use 'authorize' para restringir.
 Monitoring::routes();
 ```
 
@@ -2377,6 +2471,23 @@ Logs::isEnabled();
 ## Changelog
 
 Veja o [CHANGELOG](CHANGELOG.md) para o histórico completo de versões.
+
+## Testes
+
+Suíte PHPUnit (Orchestra Testbench). Dentro do monorepo, rode da pasta do package
+com o vendor da raiz:
+
+```bash
+../../../vendor/bin/phpunit
+```
+
+- A maior parte usa SQLite em memória.
+- `PostgresTagQueryTest` cria e apaga um banco próprio (`monitoring_test_<pid>`) no
+  PostgreSQL local; `PerformanceMetricsTest` usa o Redis local, **db 15** (é
+  esvaziado). Credenciais: `packages/RiseTech/TenancyForLaravel/tests/.env.testing`.
+  Sem PostgreSQL/Redis esses testes são pulados.
+- O `tests/bootstrap.php` carrega o código deste checkout (e do `risetools` irmão)
+  por cima das cópias do `vendor` da raiz.
 
 ## Contribuindo
 

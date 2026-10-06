@@ -77,6 +77,14 @@ interface MonitoringRepositoryInterface
     public function getEventsWithFilters(array $filters): Collection;
 
     /**
+     * Página de eventos no formato da tabela do painel.
+     *
+     * @param array $filters type, from, to, unresolved, search, tenant_id, sort, order, page, per_page
+     * @return array{data: array, recordsTotal: int, recordsFiltered: int, totalPages: int, perPage: int, current_page: int}
+     */
+    public function paginateEvents(array $filters): array;
+
+    /**
      * Busca full-text nos eventos.
      *
      * @param string $query Termo de busca

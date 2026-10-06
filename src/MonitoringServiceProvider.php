@@ -13,6 +13,8 @@ use Monolog\Handler\StreamHandler;
 use Monolog\Logger;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringDiagnoseCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringExportCommand;
+use RiseTechApps\Monitoring\Console\Commands\MonitoringRedactCommand;
+use RiseTechApps\Monitoring\Console\Commands\MonitoringSpoolRecoverCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringReportCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringRetentionCommand;
 use RiseTechApps\Monitoring\Console\Commands\MonitoringTestWatchersCommand;
@@ -62,6 +64,8 @@ class MonitoringServiceProvider extends ServiceProvider
         'monitoring:retention',
         'monitoring:export',
         'monitoring:diagnose',
+        'monitoring:redact',
+        'monitoring:spool-recover',
     ];
 
     /**
@@ -87,6 +91,8 @@ class MonitoringServiceProvider extends ServiceProvider
                 MonitoringDiagnoseCommand::class,
                 MonitoringReportCommand::class,
                 MonitoringTestWatchersCommand::class,
+                MonitoringRedactCommand::class,
+                MonitoringSpoolRecoverCommand::class,
             ]);
 
             if ($this->isIgnoredArtisanCommand()) {
@@ -100,6 +106,16 @@ class MonitoringServiceProvider extends ServiceProvider
 
         // Agendamento automático da retenção (configurável via config)
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule) {
+            // Rascunho em disco: grava o que processos mortos / flush com falha
+            // deixaram (ver Support\Spool). O container do scheduler precisa
+            // enxergar a mesma pasta (volume) que app, worker e orchestrator.
+            if (config('monitoring.spool.enabled', true) && config('monitoring.spool.auto_recover', true)) {
+                $schedule->command('monitoring:spool-recover')
+                    ->everyMinute()
+                    ->withoutOverlapping()
+                    ->runInBackground();
+            }
+
             if (config('monitoring.retention.auto_schedule', false)) {
                 $days   = config('monitoring.retention.days', 90);
                 $format = config('monitoring.retention.format', 'json');

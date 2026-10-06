@@ -22,41 +22,38 @@ class MonitoringController extends Controller
     ) {}
 
     /**
-     * Lista todos os eventos de monitoramento com filtros avançados.
+     * Lista os eventos de monitoramento, paginados.
      *
      * Query params:
      * - type: filtra por tipo (exception, request, job, etc.)
      * - from: data inicial (Y-m-d)
      * - to: data final (Y-m-d)
      * - unresolved: apenas exceções não resolvidas (true/false)
-     * - search: busca full-text na mensagem/conteúdo
-     * - sort: campo para ordenação (created_at, type)
-     * - order: asc ou desc
-     * - per_page: itens por página (padrão: 50)
+     * - search: busca na mensagem/conteúdo (sem `from`, nos últimos 30 dias)
+     * - tenant_id: eventos de um tenant (tag gravada pelo tenancy)
+     * - sort / sort_column: created_at ou type
+     * - order / sort_direction: asc ou desc
+     * - page, per_page / pagesize: paginação (teto de 200 por página)
+     *
+     * Resposta no formato da tabela do painel (data, recordsTotal, current_page...).
+     * Antes devolvia só os itens da página, sem total — a tabela não tinha como
+     * paginar — e o `search` era ignorado quando vinha com outro filtro.
      */
     public function index(Request $request): JsonResponse
     {
         try {
-            $filters = [
+            $events = $this->monitoringRepository->paginateEvents([
                 'type'       => $request->input('type'),
                 'from'       => $request->input('from'),
                 'to'         => $request->input('to'),
                 'unresolved' => $request->boolean('unresolved'),
                 'search'     => $request->input('search'),
-                'sort'       => $request->input('sort', 'created_at'),
-                'order'      => $request->input('order', 'desc'),
-                'per_page'   => $request->input('per_page', 50),
-            ];
-
-            // Remove filtros vazios
-            $filters = array_filter($filters, fn($value) => $value !== null && $value !== '');
-
-            // Se não houver filtros, retorna todos
-            if (empty($filters)) {
-                $events = $this->monitoringRepository->getAllEvents();
-            } else {
-                $events = $this->monitoringRepository->getEventsWithFilters($filters);
-            }
+                'tenant_id'  => $request->input('tenant_id'),
+                'sort'       => $request->input('sort_column', $request->input('sort', 'created_at')),
+                'order'      => $request->input('sort_direction', $request->input('order', 'desc')),
+                'page'       => $request->input('page', 1),
+                'per_page'   => $request->input('pagesize', $request->input('per_page', 50)),
+            ]);
 
             return response()->jsonSuccess($events);
         } catch (\Exception $exception) {
@@ -81,7 +78,7 @@ class MonitoringController extends Controller
                 return response()->jsonGone('Unable to load data at this time');
             }
 
-            return response()->jsonSuccess($event);
+            return response()->jsonSuccess($event->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -104,7 +101,7 @@ class MonitoringController extends Controller
                 return response()->jsonGone('Unable to load data at this time');
             }
 
-            return response()->jsonSuccess($event);
+            return response()->jsonSuccess($event->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -141,7 +138,7 @@ class MonitoringController extends Controller
                 return response()->jsonGone('Unable to load data at this time');
             }
 
-            return response()->jsonSuccess($events);
+            return response()->jsonSuccess($events->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -173,7 +170,7 @@ class MonitoringController extends Controller
                 return response()->jsonGone('Nenhum log encontrado para este usuário.');
             }
 
-            return response()->jsonSuccess($events);
+            return response()->jsonSuccess($events->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -451,7 +448,7 @@ class MonitoringController extends Controller
             $days = (int) $request->input('days', 30);
             $results = $this->monitoringRepository->searchEvents($query, $type, $days);
 
-            return response()->jsonSuccess($results);
+            return response()->jsonSuccess($results->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)
@@ -610,7 +607,7 @@ class MonitoringController extends Controller
         try {
             $exceptions = $this->monitoringRepository->getUnresolvedExceptions();
 
-            return response()->jsonSuccess($exceptions);
+            return response()->jsonSuccess($exceptions->all());
         } catch (\Exception $exception) {
             logglyError()->exception($exception)
                 ->performedOn(self::class)

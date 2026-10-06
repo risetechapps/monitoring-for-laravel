@@ -42,7 +42,10 @@ class MailWatcher extends Watcher
                 'cc'       => $this->formatAddresses($event->message->getCc()),
                 'bcc'      => $this->formatAddresses($event->message->getBcc()),
                 'subject'  => $event->message->getSubject(),
-                'html'     => $html,
+                // Corpo só com record_html: e-mail de redefinição/primeiro acesso
+                // carrega link com token e código em texto livre, que a
+                // ocultação por chave não alcança.
+                'html'     => ($this->options['record_html'] ?? false) ? $html : null,
                 // 'raw' removido — pode ser muito grande e duplica o html
             ]);
 

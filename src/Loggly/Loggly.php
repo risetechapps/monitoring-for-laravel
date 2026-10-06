@@ -155,10 +155,56 @@ class Loggly
         return $this;
     }
 
+    /**
+     * Anexa o request ao log.
+     *
+     * Com um objeto Request grava só método, URI e input. Antes era
+     * `(array) $request`, que despeja as propriedades internas do objeto —
+     * inclusive o corpo cru (`content`): a senha digitada no login ia em texto
+     * puro para o banco. Senhas/tokens do input são ocultados no
+     * IncomingEntry::toArray() (Support\Redactor).
+     */
     public function withRequest(mixed $request): static
     {
-        $this->request = is_array($request) ? $request : (array) $request;
+        $this->request = $this->describeRequest($request);
         return $this;
+    }
+
+    private function describeRequest(mixed $request): ?array
+    {
+        if (is_array($request)) {
+            return $request;
+        }
+
+        if ($request instanceof \Symfony\Component\HttpFoundation\Request) {
+            $input = $request instanceof \Illuminate\Http\Request
+                ? $request->all()
+                : array_merge($request->query->all(), $request->request->all());
+
+            array_walk_recursive($input, function (&$value) {
+                if ($value instanceof \SplFileInfo) {
+                    $value = $value instanceof \Symfony\Component\HttpFoundation\File\UploadedFile
+                        ? ['name' => $value->getClientOriginalName(), 'size_kb' => round(($value->getSize() ?: 0) / 1024, 1)]
+                        : ['name' => $value->getFilename()];
+                }
+            });
+
+            return [
+                'method' => $request->getMethod(),
+                'uri'    => $request->getRequestUri(),
+                'input'  => $input,
+            ];
+        }
+
+        if ($request === null) {
+            return null;
+        }
+
+        // Outros objetos: só o que é serializável publicamente (nunca o cast
+        // (array), que expõe propriedades protegidas/privadas).
+        $decoded = json_decode((string) json_encode($request, JSON_PARTIAL_OUTPUT_ON_ERROR), true);
+
+        return is_array($decoded) ? $decoded : ['value' => $decoded];
     }
 
     public function withResponse(mixed $response): static

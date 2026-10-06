@@ -51,7 +51,9 @@ class JobWatcher extends Watcher
     {
         $batchId = Str::uuid()->toString();
 
-        if (Monitoring::isEnabled()) {
+        // record_pending=false (padrão em worker): o batch_id continua indo no
+        // payload, só não grava a linha "pending".
+        if (Monitoring::isEnabled() && ($this->options['record_pending'] ?? true)) {
             try {
                 $content = array_merge([
                     'status'   => 'pending',
@@ -72,6 +74,7 @@ class JobWatcher extends Watcher
     {
         try {
             if (! Monitoring::isEnabled()) return;
+            if (! ($this->options['record_processed'] ?? true)) return;
 
             $displayName = $event->job->payload()['displayName'] ?? '';
             if ($this->isIgnoredJob($displayName)) return;
